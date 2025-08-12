@@ -40,7 +40,6 @@ jobs:
             if [ -f "$d/pubspec.yaml" ]; then APP_DIR="$d"; break; fi
           done
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-          echo "Detected APP_DIR=$APP_DIR"
 
       - name: Regenerate Android project (clean, embedding v2)
         shell: bash
@@ -54,73 +53,54 @@ jobs:
         shell: bash
         run: |
           set -e
-          SDKMANAGER="$(command -v sdkmanager || true)"
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          fi
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>/dev/null || true
-          "$SDKMANAGER" --install "ndk;27.0.12077973"
+          yes | sdkmanager --licenses >/dev/null 2>/dev/null || true
+          sdkmanager --install "ndk;27.0.12077973"
           NDK_PATH="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          if [ ! -d "$NDK_PATH" ]; then
-            echo "NDK path not found at $NDK_PATH" >&2
-            ls -la "$ANDROID_SDK_ROOT/ndk" || true
-            exit 1
-          fi
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK_PATH" >> "$GITHUB_ENV"
           echo "ANDROID_NDK=$NDK_PATH" >> "$GITHUB_ENV"
 
-      - name: Align NDK 27 in Gradle files
-        shell: bash
-        run: |
-          set -e
-          python3 - <<'PY'
-          import io, os, re
-          app_dir = os.environ.get('APP_DIR','.') or '.'
-
-          # gradle.properties -> android.ndkVersion=27.0.12077973 (override any existing)
-          gp = os.path.join(app_dir,'android','gradle.properties')
-          os.makedirs(os.path.dirname(gp), exist_ok=True)
-          content = ''
-          if os.path.exists(gp):
-              with io.open(gp,'r',encoding='utf-8') as f: content = f.read()
-          content = re.sub(r'(?m)^\s*android\.ndkVersion\s*=.*\n', '', content)
-          content = (content.rstrip() + '\nandroid.ndkVersion=27.0.12077973\n') if content.strip() else 'android.ndkVersion=27.0.12077973\n'
-          with io.open(gp,'w',encoding='utf-8') as f: f.write(content)
-
-          # app/build.gradle(.kts) -> ndkVersion = "27.0.12077973"
-          for path in [os.path.join(app_dir,'android','app','build.gradle.kts'),
-                       os.path.join(app_dir,'android','app','build.gradle')]:
-              if not os.path.isfile(path): continue
-              with io.open(path,'r',encoding='utf-8') as f: s = f.read()
-              before = s
-              if path.endswith('.kts'):
-                  s = re.sub(r'ndkVersion\s*=\s*"[^"]+"', 'ndkVersion = "27.0.12077973"', s)
-                  if 'ndkVersion' not in s:
-                      s = re.sub(r'(android\s*\{)', r'\1\n    ndkVersion = "27.0.12077973"', s, count=1)
-              else:
-                  s = re.sub(r'ndkVersion\s+["\'][^"\']+["\']', "ndkVersion '27.0.12077973'", s)
-                  if 'ndkVersion' not in s:
-                      s = re.sub(r'(android\s*\{)', r"\1\n    ndkVersion '27.0.12077973'", s, count=1)
-              if s != before:
-                  with io.open(path,'w',encoding='utf-8') as f: f.write(s)
-          PY
-
-      - name: Write absolute sdk.dir / ndk.dir (after NDK install)
+      - name: Enforce NDK 27 everywhere (gradle files + properties)
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
+          # 1) local.properties with absolute paths
           LP="$APP_DIR/android/local.properties"
           mkdir -p "$APP_DIR/android"
-          touch "$LP"
-          # Remove previous lines and write absolute paths
-          grep -v '^sdk\.dir=' "$LP" 2>/dev/null | grep -v '^ndk\.dir=' > "$LP.tmp" || true
-          mv "$LP.tmp" "$LP" || true
-          echo "sdk.dir=$ANDROID_SDK_ROOT" >> "$LP"
-          echo "ndk.dir=${ANDROID_NDK_HOME:-$ANDROID_SDK_ROOT/ndk/27.0.12077973}" >> "$LP"
-          echo "local.properties:"
-          cat "$LP"
+          {
+            echo "sdk.dir=$ANDROID_SDK_ROOT"
+            echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973"
+          } > "$LP"
+          # 2) gradle.properties (root and android/) -> android.ndkVersion=27.0.12077973
+          for GP in "gradle.properties" "$APP_DIR/gradle.properties" "$APP_DIR/android/gradle.properties"; do
+            if [ -f "$GP" ]; then
+              sed -i -E 's/^[[:space:]]*android\.ndkVersion[[:space:]]*=.*//g' "$GP"
+            fi
+          done
+          echo "android.ndkVersion=27.0.12077973" >> "$APP_DIR/android/gradle.properties"
+          # 3) Replace any ndkVersion in ALL gradle files (project and app)
+          python3 - <<'PY'
+import os, io, re, sys
+root = os.environ.get('APP_DIR','.') or '.'
+patts = [
+    (re.compile(r'ndkVersion\s*=\s*"[^"]+"'), 'ndkVersion = "27.0.12077973"'),   # Kotlin DSL
+    (re.compile(r'ndkVersion\s*[\'"][^\'"]+[\'"]'), "ndkVersion '27.0.12077973'") # Groovy DSL
+]
+for dirpath, _, files in os.walk(os.path.join(root, 'android')):
+    for fn in files:
+        if fn.endswith(('.gradle','.gradle.kts')):
+            p = os.path.join(dirpath, fn)
+            with io.open(p, 'r', encoding='utf-8') as f: s = f.read()
+            orig = s
+            for rx, rep in patts:
+                s = rx.sub(rep, s)
+            # If no ndkVersion present, inject inside first android { } block
+            if 'ndkVersion' not in s:
+                s = re.sub(r'(android\s*\{)', r'\1\n    ndkVersion = "27.0.12077973"', s, count=1)
+            if s != orig:
+                with io.open(p, 'w', encoding='utf-8') as f: f.write(s)
+PY
 
       - name: Flutter pub get
         shell: bash

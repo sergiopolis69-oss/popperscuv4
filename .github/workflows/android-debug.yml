@@ -1,13 +1,13 @@
-name: Android Debug APK (fresh regen + NDK27)
+name: Android Debug APK (NDK27 hardened)
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
     paths:
-      - "**/*.dart"
-      - "pubspec.yaml"
-      - ".github/workflows/android-debug.yml"
+      - '**/*.dart'
+      - 'pubspec.yaml'
+      - '.github/workflows/android-debug.yml'
 
 jobs:
   build:
@@ -19,19 +19,17 @@ jobs:
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK (cmdline-tools + sdkmanager)
-        uses: android-actions/setup-android@v3
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          channel: 'stable'
           cache: true
 
       - name: Detect Flutter app directory
+        id: detect_dir
         shell: bash
         run: |
           set -e
@@ -39,9 +37,10 @@ jobs:
           for d in "." "shell_app" "app" "mobile" "client"; do
             if [ -f "$d/pubspec.yaml" ]; then APP_DIR="$d"; break; fi
           done
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "APP_DIR=$APP_DIR" >> $GITHUB_ENV
+          echo "Detected APP_DIR=$APP_DIR"
 
-      - name: Regenerate Android project (clean, embedding v2)
+      - name: Regenerate Android project (embedding v2)
         shell: bash
         run: |
           set -e
@@ -49,50 +48,73 @@ jobs:
           rm -rf android
           flutter create --platforms=android .
 
-      - name: Install Android NDK 27
+      - name: Force NDK 27 (inject)
         shell: bash
         run: |
           set -e
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "ndk;27.0.12077973"
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import io, os, re
+          app_dir = os.environ.get('APP_DIR','.') or '.'
+          for path in [os.path.join(app_dir,'android','app','build.gradle.kts'),
+                       os.path.join(app_dir,'android','app','build.gradle')]:
+              if os.path.isfile(path):
+                  with io.open(path,'r',encoding='utf-8') as f:
+                      s=f.read()
+                  if 'ndkVersion' not in s:
+                      if path.endswith('.kts'):
+                          s=re.sub(r'(android\s*\{)', r'\1\n    ndkVersion = "27.0.12077973"', s, count=1)
+                      else:
+                          s=re.sub(r'(android\s*\{)', r"\1\n    ndkVersion '27.0.12077973'", s, count=1)
+                      with io.open(path,'w',encoding='utf-8') as f:
+                          f.write(s)
+                      print(f'Injected ndkVersion into {path}')
+                  else:
+                      print(f'ndkVersion already present in {path}')
+          props=os.path.join(app_dir,'android','gradle.properties')
+          os.makedirs(os.path.dirname(props), exist_ok=True)
+          lines=[]
+          if os.path.exists(props):
+              with io.open(props,'r',encoding='utf-8') as f:
+                  lines=f.read().splitlines()
+          if not any(line.startswith('android.ndkVersion=') for line in lines):
+              lines.append('android.ndkVersion=27.0.12077973')
+              with io.open(props,'w',encoding='utf-8') as f:
+                  f.write('\n'.join(lines)+'\n')
+              print('Added android.ndkVersion to gradle.properties')
+          else:
+              print('gradle.properties already has android.ndkVersion')
+          PY
 
-      - name: Force NDK 27 (overwrite properties and gradle files)
+      - name: Install Android NDK 27
+        shell: bash
+        env:
+          SDKMANAGER: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools/latest/bin/sdkmanager
+        run: |
+          set -e
+          echo "SDK root: $ANDROID_SDK_ROOT"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses >/dev/null
+            yes | "$SDKMANAGER" --install "ndk;27.0.12077973"
+          else:
+            yes | sdkmanager --licenses >/dev/null
+            yes | sdkmanager --install "ndk;27.0.12077973"
+          fi
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+
+      - name: Enforce NDK in local.properties
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
-
-          # 1) Overwrite gradle.properties to kill any old android.ndkVersion=26.*
-          #    (both project root and android/ root)
-          printf 'android.ndkVersion=27.0.12077973\norg.gradle.jvmargs=-Xmx2g\n' > "$APP_DIR/gradle.properties"
-          printf 'android.ndkVersion=27.0.12077973\norg.gradle.jvmargs=-Xmx2g\n' > "$APP_DIR/android/gradle.properties"
-
-          # 2) Ensure app build scripts have ndkVersion set (kts/groovy)
-          if [ -f "$APP_DIR/android/app/build.gradle.kts" ]; then
-            FILE="$APP_DIR/android/app/build.gradle.kts"
-            if grep -q 'ndkVersion' "$FILE"; then
-              sed -i 's/ndkVersion *= *"[^"]*"/ndkVersion = "27.0.12077973"/' "$FILE"
-            else
-              awk '1; /android *\{/ && !done {print "    ndkVersion = \"27.0.12077973\""; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
-            fi
-          fi
-          if [ -f "$APP_DIR/android/app/build.gradle" ]; then
-            FILE="$APP_DIR/android/app/build.gradle"
-            if grep -q 'ndkVersion' "$FILE"; then
-              sed -i "s/ndkVersion \(['\"][^'\"]*['\"]\)/ndkVersion '27.0.12077973'/" "$FILE"
-            else
-              awk '1; /android *\{/ && !done {print "    ndkVersion '\''27.0.12077973'\''"; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
-            fi
-          fi
-
-          # 3) local.properties with absolute paths (no ${} vars)
-          {
-            echo "sdk.dir=$ANDROID_SDK_ROOT"
-            echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          } > "$APP_DIR/android/local.properties"
+          LP="$APP_DIR/android/local.properties"
+          mkdir -p "$APP_DIR/android"
+          touch "$LP"
+          grep -v '^ndk\.dir=' "$LP" > "$LP.tmp" || true
+          mv "$LP.tmp" "$LP"
+          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$LP"
+          echo "Wrote ndk.dir to local.properties"
 
       - name: Flutter pub get
         shell: bash
@@ -100,10 +122,8 @@ jobs:
           cd "$APP_DIR"
           flutter pub get
 
-      - name: Build debug APK (override property via env)
+      - name: Build debug APK
         shell: bash
-        env:
-          ORG_GRADLE_PROJECT_android_ndkVersion: "27.0.12077973"
         run: |
           cd "$APP_DIR"
           flutter build apk --debug

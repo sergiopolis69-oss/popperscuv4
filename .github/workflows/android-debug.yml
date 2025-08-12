@@ -13,29 +13,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      # SDK + NDK 27 (todo en una línea)
+      - uses: android-actions/setup-android@v3
         with:
-          channel: stable
+          packages: "platform-tools build-tools;34.0.0 platforms;android-34 ndk;27.0.12077973"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
           cache: true
 
       - name: Detect Flutter app directory
-        id: detect_dir
         shell: bash
         run: |
           set -e
           APP_DIR="."
           for d in "." "shell_app" "app" "mobile" "client"; do
-            if [ -f "$d/pubspec.yaml" ]; then APP_DIR="$d"; break; fi
+            [ -f "$d/pubspec.yaml" ] && APP_DIR="$d" && break
           done
           echo "APP_DIR=$APP_DIR" >> $GITHUB_ENV
           echo "Detected APP_DIR=$APP_DIR"
@@ -48,7 +49,6 @@ jobs:
           rm -rf android
           flutter create --platforms=android .
 
-      # ❌ Nada de merges. Escribimos gradle.properties limpio.
       - name: Write clean gradle.properties
         shell: bash
         run: |
@@ -60,54 +60,7 @@ android.enableJetifier=true
 android.ndkVersion=27.0.12077973
 org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
 EOF
-          echo "----- gradle.properties -----"
-          cat "$APP_DIR/android/gradle.properties"
-
-      # (Opcional) Inyectar ndkVersion en build.gradle(.kts); no es estrictamente necesario si está en gradle.properties
-      - name: Ensure ndkVersion in build.gradle(.kts)
-        shell: bash
-        run: |
-          set -e
-          python3 - <<'PY'
-          import io, os, re
-          app_dir = os.environ.get('APP_DIR','.') or '.'
-          for path in [os.path.join(app_dir,'android','app','build.gradle.kts'),
-                       os.path.join(app_dir,'android','app','build.gradle')]:
-              if os.path.isfile(path):
-                  with io.open(path,'r',encoding='utf-8') as f: s=f.read()
-                  if 'ndkVersion' not in s:
-                      if path.endswith('.kts'):
-                          s=re.sub(r'(android\\s*\\{)', r'\\1\\n    ndkVersion = "27.0.12077973"', s, 1)
-                      else:
-                          s=re.sub(r'(android\\s*\\{)', r"\\1\\n    ndkVersion '27.0.12077973'", s, 1)
-                      with io.open(path,'w',encoding='utf-8') as f: f.write(s)
-                      print(f'Injected ndkVersion into {path}')
-          PY
-
-      # SDK + NDK por acción oficial (una sola línea de paquetes)
-      - name: Install Android SDK packages (incl. NDK 27)
-        uses: android-actions/setup-android@v3
-        with:
-          packages: "platform-tools build-tools;34.0.0 platforms;android-34 ndk;27.0.12077973"
-
-      # Asegura que no exista ndk.dir que interfiera
-      - name: Remove ndk.dir override
-        shell: bash
-        run: |
-          set -e
-          APP_DIR="${APP_DIR:-.}"
-          LP="$APP_DIR/android/local.properties"
-          if [ -f "$LP" ]; then
-            sed -i.bak '/^ndk\.dir=/d' "$LP"
-          fi
-
-      # Limpia variables que podrían colarse a la JVM
-      - name: Sanitize Java/Gradle env
-        shell: bash
-        run: |
-          echo "JAVA_TOOL_OPTIONS=" >> $GITHUB_ENV
-          echo "GRADLE_OPTS=" >> $GITHUB_ENV
-          echo "_JAVA_OPTIONS=" >> $GITHUB_ENV
+          sed -i '/^ndk\.dir=/d' "$APP_DIR/android/local.properties" 2>/dev/null || true
 
       - name: Flutter pub get
         shell: bash
@@ -120,7 +73,7 @@ EOF
           flutter pub get
           flutter doctor -v
 
-      - name: Build debug APK (Flutter)
+      - name: Build debug APK
         shell: bash
         env:
           JAVA_TOOL_OPTIONS: ""
@@ -130,8 +83,7 @@ EOF
           cd "$APP_DIR"
           flutter build apk --debug --verbose
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: app-debug.apk
           path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-debug.apk

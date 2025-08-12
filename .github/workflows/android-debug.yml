@@ -59,37 +59,28 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
 
-      - name: Force NDK 27 (global + project properties and gradle files)
+      - name: Force NDK 27 (overwrite properties and gradle files)
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
 
-          # ---- A) Global Gradle user properties (highest precedence) ----
-          mkdir -p "$HOME/.gradle"
-          if [ -f "$HOME/.gradle/gradle.properties" ]; then
-            sed -i -E '/^[[:space:]]*android\.ndkVersion[[:space:]]*=/d' "$HOME/.gradle/gradle.properties"
-          fi
-          printf 'android.ndkVersion=27.0.12077973\n' >> "$HOME/.gradle/gradle.properties"
+          # 1) Overwrite gradle.properties to kill any old android.ndkVersion=26.*
+          #    (both project root and android/ root)
+          printf 'android.ndkVersion=27.0.12077973\norg.gradle.jvmargs=-Xmx2g\n' > "$APP_DIR/gradle.properties"
+          printf 'android.ndkVersion=27.0.12077973\norg.gradle.jvmargs=-Xmx2g\n' > "$APP_DIR/android/gradle.properties"
 
-          # ---- B) Project gradle.properties (remove any leftover 26.* and set 27) ----
-          for GP in "gradle.properties" "$APP_DIR/gradle.properties" "$APP_DIR/android/gradle.properties"; do
-            [ -f "$GP" ] || touch "$GP"
-            sed -i -E '/^[[:space:]]*android\.ndkVersion[[:space:]]*=/d' "$GP"
-            printf 'android.ndkVersion=27.0.12077973\n' >> "$GP"
-          done
-
-          # ---- C) app/build.gradle(.kts): ensure ndkVersion block is 27 ----
-          FILE="$APP_DIR/android/app/build.gradle.kts"
-          if [ -f "$FILE" ]; then
+          # 2) Ensure app build scripts have ndkVersion set (kts/groovy)
+          if [ -f "$APP_DIR/android/app/build.gradle.kts" ]; then
+            FILE="$APP_DIR/android/app/build.gradle.kts"
             if grep -q 'ndkVersion' "$FILE"; then
               sed -i 's/ndkVersion *= *"[^"]*"/ndkVersion = "27.0.12077973"/' "$FILE"
             else
               awk '1; /android *\{/ && !done {print "    ndkVersion = \"27.0.12077973\""; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
             fi
           fi
-          FILE="$APP_DIR/android/app/build.gradle"
-          if [ -f "$FILE" ]; then
+          if [ -f "$APP_DIR/android/app/build.gradle" ]; then
+            FILE="$APP_DIR/android/app/build.gradle"
             if grep -q 'ndkVersion' "$FILE"; then
               sed -i "s/ndkVersion \(['\"][^'\"]*['\"]\)/ndkVersion '27.0.12077973'/" "$FILE"
             else
@@ -97,8 +88,7 @@ jobs:
             fi
           fi
 
-          # ---- D) local.properties with absolute paths (no variables) ----
-          mkdir -p "$APP_DIR/android"
+          # 3) local.properties with absolute paths (no ${} vars)
           {
             echo "sdk.dir=$ANDROID_SDK_ROOT"
             echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973"
@@ -110,8 +100,10 @@ jobs:
           cd "$APP_DIR"
           flutter pub get
 
-      - name: Build debug APK
+      - name: Build debug APK (override property via env)
         shell: bash
+        env:
+          ORG_GRADLE_PROJECT_android_ndkVersion: "27.0.12077973"
         run: |
           cd "$APP_DIR"
           flutter build apk --debug

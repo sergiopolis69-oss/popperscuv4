@@ -53,54 +53,50 @@ jobs:
         shell: bash
         run: |
           set -e
-          yes | sdkmanager --licenses >/dev/null 2>/dev/null || true
           sdkmanager --install "ndk;27.0.12077973"
           NDK_PATH="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK_PATH" >> "$GITHUB_ENV"
           echo "ANDROID_NDK=$NDK_PATH" >> "$GITHUB_ENV"
 
-      - name: Enforce NDK 27 everywhere (gradle files + properties)
+      - name: Force NDK 27 everywhere (properties + gradle)
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
+
           # 1) local.properties with absolute paths
-          LP="$APP_DIR/android/local.properties"
           mkdir -p "$APP_DIR/android"
           {
             echo "sdk.dir=$ANDROID_SDK_ROOT"
             echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          } > "$LP"
-          # 2) gradle.properties (root and android/) -> android.ndkVersion=27.0.12077973
+          } > "$APP_DIR/android/local.properties"
+
+          # 2) gradle.properties (root and android) -> remove old and set 27.0.12077973
           for GP in "gradle.properties" "$APP_DIR/gradle.properties" "$APP_DIR/android/gradle.properties"; do
-            if [ -f "$GP" ]; then
-              sed -i -E 's/^[[:space:]]*android\.ndkVersion[[:space:]]*=.*//g' "$GP"
-            fi
+            [ -f "$GP" ] || continue
+            grep -v -E '^[[:space:]]*android\.ndkVersion[[:space:]]*=' "$GP" > "$GP.tmp" || true
+            mv "$GP.tmp" "$GP"
           done
           echo "android.ndkVersion=27.0.12077973" >> "$APP_DIR/android/gradle.properties"
-          # 3) Replace any ndkVersion in ALL gradle files (project and app)
-          python3 - <<'PY'
-import os, io, re, sys
-root = os.environ.get('APP_DIR','.') or '.'
-patts = [
-    (re.compile(r'ndkVersion\s*=\s*"[^"]+"'), 'ndkVersion = "27.0.12077973"'),   # Kotlin DSL
-    (re.compile(r'ndkVersion\s*[\'"][^\'"]+[\'"]'), "ndkVersion '27.0.12077973'") # Groovy DSL
-]
-for dirpath, _, files in os.walk(os.path.join(root, 'android')):
-    for fn in files:
-        if fn.endswith(('.gradle','.gradle.kts')):
-            p = os.path.join(dirpath, fn)
-            with io.open(p, 'r', encoding='utf-8') as f: s = f.read()
-            orig = s
-            for rx, rep in patts:
-                s = rx.sub(rep, s)
-            # If no ndkVersion present, inject inside first android { } block
-            if 'ndkVersion' not in s:
-                s = re.sub(r'(android\s*\{)', r'\1\n    ndkVersion = "27.0.12077973"', s, count=1)
-            if s != orig:
-                with io.open(p, 'w', encoding='utf-8') as f: f.write(s)
-PY
+
+          # 3) app/build.gradle(.kts) -> ensure ndkVersion is 27
+          FILE="$APP_DIR/android/app/build.gradle.kts"
+          if [ -f "$FILE" ]; then
+            if grep -q 'ndkVersion' "$FILE"; then
+              sed -i 's/ndkVersion *= *"[^"]*"/ndkVersion = "27.0.12077973"/' "$FILE"
+            else
+              awk '1; /android *\{/ && !done {print "    ndkVersion = \"27.0.12077973\""; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+            fi
+          fi
+          FILE="$APP_DIR/android/app/build.gradle"
+          if [ -f "$FILE" ]; then
+            if grep -q 'ndkVersion' "$FILE"; then
+              sed -i "s/ndkVersion \(['\"][^'\"]*['\"]\)/ndkVersion '27.0.12077973'/" "$FILE"
+            else
+              awk '1; /android *\{/ && !done {print "    ndkVersion '\''27.0.12077973'\''"; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+            fi
+          fi
 
       - name: Flutter pub get
         shell: bash

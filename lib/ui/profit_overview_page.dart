@@ -16,10 +16,10 @@ class _ProfitOverviewPageState extends State<ProfitOverviewPage> {
   Period _period = Period.day;
   bool _loading = true;
   Map<String, double> _data = const {
-    'total': 0,
-    'profit': 0,
-    'discount': 0,
-    'shipping': 0,
+    'total': 0.0,
+    'profit': 0.0,
+    'discount': 0.0,
+    'shipping': 0.0,
   };
   late DateTime _from;
   late DateTime _to;
@@ -76,7 +76,7 @@ class _ProfitOverviewPageState extends State<ProfitOverviewPage> {
     final profit = _data['profit'] ?? 0;
     final discount = _data['discount'] ?? 0;
     final shipping = _data['shipping'] ?? 0;
-    final profitPct = total <= 0 ? 0 : (profit / total * 100);
+    final profitPct = total <= 0.0 ? 0.0 : (profit / total * 100.0);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Utilidad (totales y porcentajes)')),

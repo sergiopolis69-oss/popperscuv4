@@ -1,0 +1,31 @@
+name: popperscuv2
+description: Inventario/ventas/clientes offline con utilidad y reportes.
+publish_to: "none"
+version: 0.9.0+9
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  sqflite: any
+  path_provider: any
+  intl: any
+  csv: any
+  flutter_riverpod: any
+  uuid: any
+  file_picker: any
+  file_saver: any
+  share_plus: any
+  flutter_typeahead: any
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png

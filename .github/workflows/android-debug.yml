@@ -62,9 +62,9 @@ jobs:
                       s=f.read()
                   if 'ndkVersion' not in s:
                       if path.endswith('.kts'):
-                          s=re.sub(r'(android\s*\{)', r'\1\n    ndkVersion = "27.0.12077973"', s, count=1)
+                          s=re.sub(r'(android\\s*\\{)', r'\\1\\n    ndkVersion = "27.0.12077973"', s, count=1)
                       else:
-                          s=re.sub(r'(android\s*\{)', r"\1\n    ndkVersion '27.0.12077973'", s, count=1)
+                          s=re.sub(r'(android\\s*\\{)', r"\\1\\n    ndkVersion '27.0.12077973'", s, count=1)
                       with io.open(path,'w',encoding='utf-8') as f:
                           f.write(s)
                       print(f'Injected ndkVersion into {path}')
@@ -79,7 +79,7 @@ jobs:
           if not any(line.startswith('android.ndkVersion=') for line in lines):
               lines.append('android.ndkVersion=27.0.12077973')
               with io.open(props,'w',encoding='utf-8') as f:
-                  f.write('\n'.join(lines)+'\n')
+                  f.write('\\n'.join(lines)+'\\n')
               print('Added android.ndkVersion to gradle.properties')
           else:
               print('gradle.properties already has android.ndkVersion')
@@ -95,7 +95,7 @@ jobs:
           if [ -x "$SDKMANAGER" ]; then
             yes | "$SDKMANAGER" --licenses >/dev/null
             yes | "$SDKMANAGER" --install "ndk;27.0.12077973"
-          else:
+          else
             yes | sdkmanager --licenses >/dev/null
             yes | sdkmanager --install "ndk;27.0.12077973"
           fi
@@ -112,22 +112,6 @@ jobs:
           if [ -f "$LP" ]; then
             sed -i.bak '/^ndk\.dir=/d' "$LP"
           fi
-        shell: bash
-        env:
-          SDKMANAGER: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools/latest/bin/sdkmanager
-        run: |
-          set -e
-          echo "SDK root: $ANDROID_SDK_ROOT"
-          if [ -x "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses >/dev/null
-            yes | "$SDKMANAGER" --install "ndk;27.0.12077973"
-          else:
-            yes | sdkmanager --licenses >/dev/null
-            yes | sdkmanager --install "ndk;27.0.12077973"
-          fi
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
 
       - name: Flutter pub get
         shell: bash

@@ -12,6 +12,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +21,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # SDK + NDK 27 (todo en UNA línea)
+      # Instala SDK + NDK 27 (nota: paquetes en UNA sola línea)
       - uses: android-actions/setup-android@v3
         with:
           packages: "platform-tools build-tools;34.0.0 platforms;android-34 ndk;27.0.12077973"
@@ -49,38 +50,62 @@ jobs:
           rm -rf android
           flutter create --platforms=android .
 
-      - name: Write clean gradle.properties (no ndk.dir)
+      - name: Write clean gradle.properties (no ndk.dir, heap alto, Jetifier OFF)
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
-          mkdir -p "$APP_DIR/android"
           PROPS="$APP_DIR/android/gradle.properties"
+          mkdir -p "$APP_DIR/android"
           : > "$PROPS"
-          echo "android.useAndroidX=true" >> "$PROPS"
-          echo "android.enableJetifier=true" >> "$PROPS"
-          echo "android.ndkVersion=27.0.12077973" >> "$PROPS"
-          echo "org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8" >> "$PROPS"
-          # si existía, quita ndk.dir para que Gradle resuelva por versión
-          sed -i.bak '/^ndk\.dir=/d' "$APP_DIR/android/local.properties" 2>/dev/null || true
+          printf "%s\n" \
+            "android.useAndroidX=true" \
+            "android.enableJetifier=false" \
+            "android.ndkVersion=27.0.12077973" \
+            "org.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8" \
+            "org.gradle.workers.max=2" \
+            "org.gradle.daemon=false" \
+            >> "$PROPS"
+          # elimina ndk.dir si existiera
+          [ -f "$APP_DIR/android/local.properties" ] && sed -i.bak '/^ndk\.dir=/d' "$APP_DIR/android/local.properties" || true
+          echo "----- gradle.properties -----"
+          cat "$PROPS"
+
+      - name: Inject abiFilters (ARM only) en build.gradle(.kts)
+        shell: bash
+        run: |
+          set -e
+          APP_DIR="${APP_DIR:-.}"
+          KTS="$APP_DIR/android/app/build.gradle.kts"
+          GR="$APP_DIR/android/app/build.gradle"
+
+          if [ -f "$KTS" ] && ! grep -q 'abiFilters' "$KTS"; then
+            awk '1; /defaultConfig[[:space:]]*\{/ && !f {print "        ndk {\n            abiFilters += listOf(\"armeabi-v7a\", \"arm64-v8a\")\n        }"; f=1}' "$KTS" > "$KTS.tmp" && mv "$KTS.tmp" "$KTS"
+            echo "Injected abiFilters into build.gradle.kts"
+          fi
+
+          if [ -f "$GR" ] && ! grep -q 'abiFilters' "$GR"; then
+            awk '1; /defaultConfig[[:space:]]*\{/ && !f {print "        ndk {\n            abiFilters \'armeabi-v7a\', \'arm64-v8a\'\n        }"; f=1}' "$GR" > "$GR.tmp" && mv "$GR.tmp" "$GR"
+            echo "Injected abiFilters into build.gradle (Groovy)"
+          fi
 
       - name: Flutter pub get
         shell: bash
         env:
-            JAVA_TOOL_OPTIONS: ""
-            GRADLE_OPTS: ""
-            _JAVA_OPTIONS: ""
+          JAVA_TOOL_OPTIONS: ""
+          GRADLE_OPTS: ""
+          _JAVA_OPTIONS: ""
         run: |
           cd "$APP_DIR"
           flutter pub get
           flutter doctor -v
 
-      - name: Build debug APK
+      - name: Build debug APK (verbose)
         shell: bash
         env:
-            JAVA_TOOL_OPTIONS: ""
-            GRADLE_OPTS: ""
-            _JAVA_OPTIONS: ""
+          JAVA_TOOL_OPTIONS: ""
+          GRADLE_OPTS: ""
+          _JAVA_OPTIONS: ""
         run: |
           cd "$APP_DIR"
           flutter build apk --debug --verbose

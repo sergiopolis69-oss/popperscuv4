@@ -174,9 +174,11 @@ class _SalesPageState extends ConsumerState<SalesPage> {
                             itemCount: opts.length,
                             itemBuilder: (c, i) {
                               final o = opts.elementAt(i);
+                              final sku = _skuOf(o);
+                              final skuText = (sku == null || sku.isEmpty) ? "-" : sku;
                               return ListTile(
                                 title: Text(_nameOf(o)),
-                                subtitle: Text('SKU: \${_skuOf(o) ?? '-'}  |  \$\${_priceOf(o).toStringAsFixed(2)}'),
+                                subtitle: Text("SKU: $skuText  |  \$${_priceOf(o).toStringAsFixed(2)}"),
                                 onTap: () => onSelected(o),
                               );
                             },
@@ -197,8 +199,8 @@ class _SalesPageState extends ConsumerState<SalesPage> {
                 itemBuilder: (c, i) {
                   final it = _items[i];
                   return ListTile(
-                    title: Text('\${it.name}  x\${it.quantity}  \$\${it.price.toStringAsFixed(2)}'),
-                    subtitle: Text('Desc: \${it.lineDiscount.toStringAsFixed(2)} | Subtotal: \${it.subtotal.toStringAsFixed(2)}'),
+                    title: Text("${it.name}  x${it.quantity}  \$${it.price.toStringAsFixed(2)}"),
+                    subtitle: Text("Desc: ${it.lineDiscount.toStringAsFixed(2)} | Subtotal: ${it.subtotal.toStringAsFixed(2)}"),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -251,7 +253,7 @@ class _SalesPageState extends ConsumerState<SalesPage> {
                     const SizedBox(height: 6),
                     Align(
                       alignment: Alignment.centerRight,
-                      child: Text('Total: \$\${(total < 0 ? 0 : total).toStringAsFixed(2)}', style: Theme.of(context).textTheme.titleLarge),
+                      child: Text("Total: \$${(total < 0 ? 0 : total).toStringAsFixed(2)}", style: Theme.of(context).textTheme.titleLarge),
                     ),
                     const SizedBox(height: 8),
                     SizedBox(

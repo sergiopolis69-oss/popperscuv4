@@ -48,7 +48,23 @@ jobs:
           rm -rf android
           flutter create --platforms=android .
 
-      - name: Force NDK 27 (inject)
+      # ❌ Nada de merges. Escribimos gradle.properties limpio.
+      - name: Write clean gradle.properties
+        shell: bash
+        run: |
+          set -e
+          APP_DIR="${APP_DIR:-.}"
+          cat > "$APP_DIR/android/gradle.properties" <<'EOF'
+android.useAndroidX=true
+android.enableJetifier=true
+android.ndkVersion=27.0.12077973
+org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+EOF
+          echo "----- gradle.properties -----"
+          cat "$APP_DIR/android/gradle.properties"
+
+      # (Opcional) Inyectar ndkVersion en build.gradle(.kts); no es estrictamente necesario si está en gradle.properties
+      - name: Ensure ndkVersion in build.gradle(.kts)
         shell: bash
         run: |
           set -e
@@ -66,35 +82,16 @@ jobs:
                           s=re.sub(r'(android\\s*\\{)', r"\\1\\n    ndkVersion '27.0.12077973'", s, 1)
                       with io.open(path,'w',encoding='utf-8') as f: f.write(s)
                       print(f'Injected ndkVersion into {path}')
-          # gradle.properties: ponemos TODO aquí (AndroidX, Jetifier, NDK, memoria, workers, logging)
-          props=os.path.join(app_dir,'android','gradle.properties')
-          os.makedirs(os.path.dirname(props), exist_ok=True)
-          lines=[]
-          if os.path.exists(props):
-              with io.open(props,'r',encoding='utf-8') as f: lines=f.read().splitlines()
-          def ensure(k,v):
-              if not any(x.startswith(k+'=') for x in lines):
-                  lines.append(f'{k}={v}')
-              else:
-                  lines[:] = [f'{k}={v}' if x.startswith(k+'=') else x for x in lines]
-          ensure('android.ndkVersion','27.0.12077973')
-          ensure('android.useAndroidX','true')
-          ensure('android.enableJetifier','true')
-          ensure('org.gradle.daemon','false')
-          ensure('org.gradle.parallel','false')
-          ensure('org.gradle.workers.max','2')
-          ensure('org.gradle.jvmargs','-Xmx3g -Dfile.encoding=UTF-8')
-          ensure('org.gradle.logging.level','info')
-          with io.open(props,'w',encoding='utf-8') as f: f.write('\\n'.join(lines)+'\\n')
-          print('Updated gradle.properties')
           PY
 
+      # SDK + NDK por acción oficial (una sola línea de paquetes)
       - name: Install Android SDK packages (incl. NDK 27)
         uses: android-actions/setup-android@v3
         with:
           packages: "platform-tools build-tools;34.0.0 platforms;android-34 ndk;27.0.12077973"
 
-      - name: Remove ndk.dir override (let Gradle pick by version)
+      # Asegura que no exista ndk.dir que interfiera
+      - name: Remove ndk.dir override
         shell: bash
         run: |
           set -e
@@ -104,6 +101,7 @@ jobs:
             sed -i.bak '/^ndk\.dir=/d' "$LP"
           fi
 
+      # Limpia variables que podrían colarse a la JVM
       - name: Sanitize Java/Gradle env
         shell: bash
         run: |
@@ -122,22 +120,19 @@ jobs:
           flutter pub get
           flutter doctor -v
 
-      # 🔧 Compilamos con Gradle wrapper directo para ver logs detallados
-      - name: Build debug APK (Gradle direct, verbose)
+      - name: Build debug APK (Flutter)
         shell: bash
-        timeout-minutes: 30
         env:
           JAVA_TOOL_OPTIONS: ""
           GRADLE_OPTS: ""
           _JAVA_OPTIONS: ""
         run: |
-          set -e
-          cd "$APP_DIR/android"
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace --info
+          cd "$APP_DIR"
+          flutter build apk --debug --verbose
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-debug.apk
-          path: ${{ env.APP_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error

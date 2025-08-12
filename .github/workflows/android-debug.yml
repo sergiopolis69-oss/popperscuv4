@@ -62,14 +62,12 @@ jobs:
                       s=f.read()
                   if 'ndkVersion' not in s:
                       if path.endswith('.kts'):
-                          s=re.sub(r'(android\\s*\\{)', r'\\1\\n    ndkVersion = "27.0.12077973"', s, count=1)
+                          s=re.sub(r'(android\\s*\\{)', r'\\1\\n    ndkVersion = "27.0.12077973"', s, 1)
                       else:
-                          s=re.sub(r'(android\\s*\\{)', r"\\1\\n    ndkVersion '27.0.12077973'", s, count=1)
+                          s=re.sub(r'(android\\s*\\{)', r"\\1\\n    ndkVersion '27.0.12077973'", s, 1)
                       with io.open(path,'w',encoding='utf-8') as f:
                           f.write(s)
                       print(f'Injected ndkVersion into {path}')
-                  else:
-                      print(f'ndkVersion already present in {path}')
           props=os.path.join(app_dir,'android','gradle.properties')
           os.makedirs(os.path.dirname(props), exist_ok=True)
           lines=[]
@@ -81,22 +79,21 @@ jobs:
               with io.open(props,'w',encoding='utf-8') as f:
                   f.write('\\n'.join(lines)+'\\n')
               print('Added android.ndkVersion to gradle.properties')
-          else:
-              print('gradle.properties already has android.ndkVersion')
           PY
 
-      # Instala cmdline-tools + platform-tools + build-tools + plataforma + NDK 27
+      # ✅ Paquetes SIN comillas, uno por línea
       - name: Install Android SDK packages (incl. NDK 27)
         uses: android-actions/setup-android@v3
         with:
           packages: |
-            "platform-tools"
-            "build-tools;34.0.0"
-            "platforms;android-34"
-            "ndk;27.0.12077973"
+            cmdline-tools;latest
+            platform-tools
+            build-tools;34.0.0
+            platforms;android-34
+            ndk;27.0.12077973
 
-      # Elimina cualquier ndk.dir para que Gradle resuelva por versión
-      - name: Remove ndk.dir override (let Gradle pick by version)
+      # Quita cualquier ndk.dir, dejamos que Gradle elija por versión
+      - name: Remove ndk.dir override
         shell: bash
         run: |
           set -e

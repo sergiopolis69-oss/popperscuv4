@@ -103,18 +103,31 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
           echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
 
-      - name: Enforce NDK in local.properties
+      - name: Remove ndk.dir override (let Gradle pick by version)
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
           LP="$APP_DIR/android/local.properties"
-          mkdir -p "$APP_DIR/android"
-          touch "$LP"
-          grep -v '^ndk\.dir=' "$LP" > "$LP.tmp" || true
-          mv "$LP.tmp" "$LP"
-          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$LP"
-          echo "Wrote ndk.dir to local.properties"
+          if [ -f "$LP" ]; then
+            sed -i.bak '/^ndk\.dir=/d' "$LP"
+          fi
+        shell: bash
+        env:
+          SDKMANAGER: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools/latest/bin/sdkmanager
+        run: |
+          set -e
+          echo "SDK root: $ANDROID_SDK_ROOT"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses >/dev/null
+            yes | "$SDKMANAGER" --install "ndk;27.0.12077973"
+          else:
+            yes | sdkmanager --licenses >/dev/null
+            yes | sdkmanager --install "ndk;27.0.12077973"
+          fi
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
 
       - name: Flutter pub get
         shell: bash

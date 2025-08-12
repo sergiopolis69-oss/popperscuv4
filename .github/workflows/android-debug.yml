@@ -49,48 +49,60 @@ jobs:
           rm -rf android
           flutter create --platforms=android .
 
-      - name: Install NDK 27 and accept licenses
+      - name: Install Android NDK 27
         shell: bash
         run: |
           set -e
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager --install "ndk;27.0.12077973"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
           echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
 
-      - name: Force NDK 27 everywhere (properties + gradle)
+      - name: Force NDK 27 (global + project properties and gradle files)
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
 
-          # local.properties with absolute paths
-          mkdir -p "$APP_DIR/android"
-          {
-            echo "sdk.dir=$ANDROID_SDK_ROOT"
-            echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          } > "$APP_DIR/android/local.properties"
+          # ---- A) Global Gradle user properties (highest precedence) ----
+          mkdir -p "$HOME/.gradle"
+          if [ -f "$HOME/.gradle/gradle.properties" ]; then
+            sed -i -E '/^[[:space:]]*android\.ndkVersion[[:space:]]*=/d' "$HOME/.gradle/gradle.properties"
+          fi
+          printf 'android.ndkVersion=27.0.12077973\n' >> "$HOME/.gradle/gradle.properties"
 
-          # Ensure ALL gradle.properties use android.ndkVersion=27.0.12077973
+          # ---- B) Project gradle.properties (remove any leftover 26.* and set 27) ----
           for GP in "gradle.properties" "$APP_DIR/gradle.properties" "$APP_DIR/android/gradle.properties"; do
             [ -f "$GP" ] || touch "$GP"
             sed -i -E '/^[[:space:]]*android\.ndkVersion[[:space:]]*=/d' "$GP"
             printf 'android.ndkVersion=27.0.12077973\n' >> "$GP"
           done
 
-          # Replace any explicit 26.3.* defaults and set ndkVersion in all Gradle files
-          find "$APP_DIR/android" -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -print0 | while IFS= read -r -d '' FILE; do
-            # 1) Replace hardcoded 26.3.* with 27.0.12077973 (if template had a default)
-            sed -i -E 's/26\.3\.[0-9]+/27.0.12077973/g' "$FILE"
-            # 2) If ndkVersion is present, set it to 27.0.12077973 (Groovy and Kotlin DSL)
-            sed -i -E 's/ndkVersion[[:space:]]*=[[:space:]]*"[^"]*"/ndkVersion = "27.0.12077973"/g' "$FILE"
-            sed -i -E "s/ndkVersion[[:space:]]+['\"][^'\"]*['\"]/ndkVersion '27.0.12077973'/g" "$FILE"
-            # 3) If ndkVersion missing, inject one inside the first android { } block
-            if ! grep -q 'ndkVersion' "$FILE"; then
-              awk '1; /android[[:space:]]*\{/ && !done {print "    ndkVersion = \"27.0.12077973\""; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+          # ---- C) app/build.gradle(.kts): ensure ndkVersion block is 27 ----
+          FILE="$APP_DIR/android/app/build.gradle.kts"
+          if [ -f "$FILE" ]; then
+            if grep -q 'ndkVersion' "$FILE"; then
+              sed -i 's/ndkVersion *= *"[^"]*"/ndkVersion = "27.0.12077973"/' "$FILE"
+            else
+              awk '1; /android *\{/ && !done {print "    ndkVersion = \"27.0.12077973\""; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
             fi
-          done
+          fi
+          FILE="$APP_DIR/android/app/build.gradle"
+          if [ -f "$FILE" ]; then
+            if grep -q 'ndkVersion' "$FILE"; then
+              sed -i "s/ndkVersion \(['\"][^'\"]*['\"]\)/ndkVersion '27.0.12077973'/" "$FILE"
+            else
+              awk '1; /android *\{/ && !done {print "    ndkVersion '\''27.0.12077973'\''"; done=1}' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+            fi
+          fi
+
+          # ---- D) local.properties with absolute paths (no variables) ----
+          mkdir -p "$APP_DIR/android"
+          {
+            echo "sdk.dir=$ANDROID_SDK_ROOT"
+            echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973"
+          } > "$APP_DIR/android/local.properties"
 
       - name: Flutter pub get
         shell: bash
@@ -98,12 +110,11 @@ jobs:
           cd "$APP_DIR"
           flutter pub get
 
-      - name: Build debug APK (also override via Gradle param)
+      - name: Build debug APK
         shell: bash
         run: |
           cd "$APP_DIR"
-          ./gradlew -p android -Pandroid.ndkVersion=27.0.12077973 --no-daemon --warning-mode all tasks >/dev/null 2>&1 || true
-          flutter build apk --debug -Pandroid.ndkVersion=27.0.12077973
+          flutter build apk --debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

@@ -38,7 +38,7 @@ PY
 LP="android/local.properties"
 mkdir -p android
 touch "$LP"
+# eliminar cualquier ndk.dir para dejar que Gradle resuelva por version
 grep -v '^ndk\.dir=' "$LP" > "$LP.tmp" || true
-mv "$LP.tmp" "$LP"
-echo "ndk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/27.0.12077973" >> "$LP"
-echo "OK: $(tail -n1 "$LP")"
+mv "$LP.tmp" "$LP" || true
+echo "ndk.dir removido (si existía)."

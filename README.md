@@ -9,3 +9,5 @@ flutter build apk --debug
 ## CI
 Usa `.github/workflows/android-debug.yml` para regenerar `android/` (embedding v2),
 forzar **NDK 27.0.12077973**, y publicar `app-debug.apk`.
+
+> v0.9.1: Se elimina el uso de `ndk.dir`. Gradle selecciona el NDK por **versión** (`ndkVersion`).

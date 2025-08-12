@@ -20,7 +20,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # SDK + NDK 27 (todo en una línea)
+      # SDK + NDK 27 (todo en UNA línea)
       - uses: android-actions/setup-android@v3
         with:
           packages: "platform-tools build-tools;34.0.0 platforms;android-34 ndk;27.0.12077973"
@@ -49,25 +49,27 @@ jobs:
           rm -rf android
           flutter create --platforms=android .
 
-      - name: Write clean gradle.properties
+      - name: Write clean gradle.properties (no ndk.dir)
         shell: bash
         run: |
           set -e
           APP_DIR="${APP_DIR:-.}"
-          cat > "$APP_DIR/android/gradle.properties" <<'EOF'
-android.useAndroidX=true
-android.enableJetifier=true
-android.ndkVersion=27.0.12077973
-org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
-EOF
-          sed -i '/^ndk\.dir=/d' "$APP_DIR/android/local.properties" 2>/dev/null || true
+          mkdir -p "$APP_DIR/android"
+          PROPS="$APP_DIR/android/gradle.properties"
+          : > "$PROPS"
+          echo "android.useAndroidX=true" >> "$PROPS"
+          echo "android.enableJetifier=true" >> "$PROPS"
+          echo "android.ndkVersion=27.0.12077973" >> "$PROPS"
+          echo "org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8" >> "$PROPS"
+          # si existía, quita ndk.dir para que Gradle resuelva por versión
+          sed -i.bak '/^ndk\.dir=/d' "$APP_DIR/android/local.properties" 2>/dev/null || true
 
       - name: Flutter pub get
         shell: bash
         env:
-          JAVA_TOOL_OPTIONS: ""
-          GRADLE_OPTS: ""
-          _JAVA_OPTIONS: ""
+            JAVA_TOOL_OPTIONS: ""
+            GRADLE_OPTS: ""
+            _JAVA_OPTIONS: ""
         run: |
           cd "$APP_DIR"
           flutter pub get
@@ -76,9 +78,9 @@ EOF
       - name: Build debug APK
         shell: bash
         env:
-          JAVA_TOOL_OPTIONS: ""
-          GRADLE_OPTS: ""
-          _JAVA_OPTIONS: ""
+            JAVA_TOOL_OPTIONS: ""
+            GRADLE_OPTS: ""
+            _JAVA_OPTIONS: ""
         run: |
           cd "$APP_DIR"
           flutter build apk --debug --verbose

@@ -21,7 +21,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # Instala SDK + NDK 27 (nota: paquetes en UNA sola línea)
+      # SDK + NDK 27 (paquetes en UNA sola línea)
       - uses: android-actions/setup-android@v3
         with:
           packages: "platform-tools build-tools;34.0.0 platforms;android-34 ndk;27.0.12077973"
@@ -66,7 +66,7 @@ jobs:
             "org.gradle.workers.max=2" \
             "org.gradle.daemon=false" \
             >> "$PROPS"
-          # elimina ndk.dir si existiera
+          # quita ndk.dir si existiera
           [ -f "$APP_DIR/android/local.properties" ] && sed -i.bak '/^ndk\.dir=/d' "$APP_DIR/android/local.properties" || true
           echo "----- gradle.properties -----"
           cat "$PROPS"
@@ -85,7 +85,7 @@ jobs:
           fi
 
           if [ -f "$GR" ] && ! grep -q 'abiFilters' "$GR"; then
-            awk '1; /defaultConfig[[:space:]]*\{/ && !f {print "        ndk {\n            abiFilters \'armeabi-v7a\', \'arm64-v8a\'\n        }"; f=1}' "$GR" > "$GR.tmp" && mv "$GR.tmp" "$GR"
+            awk '1; /defaultConfig[[:space:]]*\{/ && !f {print "        ndk {\n            abiFilters \"armeabi-v7a\", \"arm64-v8a\"\n        }"; f=1}' "$GR" > "$GR.tmp" && mv "$GR.tmp" "$GR"
             echo "Injected abiFilters into build.gradle (Groovy)"
           fi
 

@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../repositories/sale_repository.dart';
@@ -79,13 +78,16 @@ class _TopCustomersPageState extends State<TopCustomersPage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                FilledButton(onPressed: () => setState(() {}), child: const Text('Actualizar')),
+                FilledButton(
+                  onPressed: () => setState(() {}),
+                  child: const Text('Actualizar'),
+                ),
               ],
             ),
           ),
           const Divider(height: 1),
           Expanded(
-            child: FutureBuilder<List<Map<String, Object?>>>>(
+            child: FutureBuilder<List<Map<String, Object?>>>(
               future: SaleRepository().topCustomers(from, to),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -105,13 +107,23 @@ class _TopCustomersPageState extends State<TopCustomersPage> {
                     final pct = total == 0 ? 0.0 : (profit / total * 100.0);
                     return ListTile(
                       title: Text(name),
-                      subtitle: Text('Órdenes: ${orders.toString()} · Utilidad: \$${profit.toStringAsFixed(2)} · ${pct.toStringAsFixed(1)}%'),
-                      trailing: Text('\$${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(
+                        'Órdenes: ${orders.toString()} · Utilidad: \$${profit.toStringAsFixed(2)} · ${pct.toStringAsFixed(1)}%',
+                      ),
+                      trailing: Text(
+                        '\$${total.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
                       onTap: () {
                         showModalBottomSheet(
                           context: context,
                           isScrollControlled: true,
-                          builder: (_) => _CustomerHistorySheet(customerId: customerId, from: from, to: to, fmtDT: _fmtDT),
+                          builder: (_) => _CustomerHistorySheet(
+                            customerId: customerId,
+                            from: from,
+                            to: to,
+                            fmtDT: _fmtDT,
+                          ),
                         );
                       },
                     );
@@ -131,18 +143,27 @@ class _CustomerHistorySheet extends StatelessWidget {
   final DateTime from;
   final DateTime to;
   final DateFormat fmtDT;
-  const _CustomerHistorySheet({required this.customerId, required this.from, required this.to, required this.fmtDT});
+  const _CustomerHistorySheet({
+    required this.customerId,
+    required this.from,
+    required this.to,
+    required this.fmtDT,
+  });
 
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: FutureBuilder<List<Map<String, Object?>>>>(
-          future: SaleRepository().history(customerId: customerId, from: from, to: to),
+        child: FutureBuilder<List<Map<String, Object?>>>(
+          future: SaleRepository()
+              .history(customerId: customerId, from: from, to: to),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
-              return const SizedBox(height: 200, child: Center(child: CircularProgressIndicator()));
+              return const SizedBox(
+                height: 200,
+                child: Center(child: CircularProgressIndicator()),
+              );
             }
             final rows = snapshot.data!;
             double total = 0.0;
@@ -163,7 +184,9 @@ class _CustomerHistorySheet extends StatelessWidget {
                 ...rows.map((r) {
                   final whenStr = (r['created_at'] as String?) ?? '';
                   DateTime? when;
-                  try { when = DateTime.parse(whenStr); } catch (_) {}
+                  try {
+                    when = DateTime.parse(whenStr);
+                  } catch (_) {}
                   final t = (r['total'] as num?)?.toDouble() ?? 0.0;
                   final p = (r['profit'] as num?)?.toDouble() ?? 0.0;
                   return ListTile(

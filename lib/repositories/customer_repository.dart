@@ -1,26 +1,43 @@
+
+import 'package:uuid/uuid.dart';
+import 'package:sqflite/sqflite.dart';
 import '../services/db.dart';
-import '../models/customer.dart';
 
 class CustomerRepository {
-  Future<List<Customer>> all() async {
+  final _uuid = const Uuid();
+
+  Future<List<Map<String, Object?>>> all() async {
     final db = await AppDatabase().database;
-    final rows = await db.query('customers', orderBy: 'created_at DESC');
-    return rows.map((e) => Customer.fromMap(e)).toList();
+    return db.query('customers', orderBy: 'created_at DESC');
   }
 
-  Future<Customer> create(Customer c) async {
+  Future<String> upsertCustomer({
+    String? id,
+    required String name,
+    String? phone,
+    String? email,
+  }) async {
     final db = await AppDatabase().database;
-    await db.insert('customers', c.toMap());
-    return c;
+    final now = DateTime.now().toIso8601String();
+    final data = <String, Object?>{
+      'id': id ?? _uuid.v4(),
+      'name': name,
+      'phone': (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
+      'email': (email == null || email.trim().isEmpty) ? null : email.trim(),
+      'created_at': now,
+    };
+    await db.insert('customers', data, conflictAlgorithm: ConflictAlgorithm.replace);
+    return data['id'] as String;
   }
 
-  Future<void> update(Customer c) async {
+  Future<void> deleteById(String id) async {
     final db = await AppDatabase().database;
-    await db.update('customers', c.toMap(), where: 'id = ?', whereArgs: [c.id]);
-  }
-
-  Future<void> delete(String id) async {
-    final db = await AppDatabase().database;
-    await db.delete('customers', where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      // Si la tabla sales tiene customer_id nullable, setéalo a null para no perder historial
+      try {
+        await txn.update('sales', {'customer_id': null}, where: 'customer_id = ?', whereArgs: [id]);
+      } catch (_) {}
+      await txn.delete('customers', where: 'id = ?', whereArgs: [id]);
+    });
   }
 }

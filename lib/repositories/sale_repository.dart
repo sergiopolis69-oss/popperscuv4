@@ -1,4 +1,3 @@
-// lib/repositories/sale_repository.dart
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -8,82 +7,97 @@ class SaleRepository {
   final _uuid = const Uuid();
   Future<Database> _db() => AppDatabase().database;
 
-  /// Crea una venta y sus renglones.
-  /// - `shipping` se suma al total pero **no** afecta la utilidad.
+  // Crea la venta + renglones. `shipping` se suma al total pero NO afecta utilidad.
   Future<void> create(
     Map<String, Object?> sale,
     List<Map<String, Object?>> items,
   ) async {
     final db = await _db();
-    await db.transaction((txn) async {
-      final saleId = (sale['id'] as String?) ?? _uuid.v4();
 
-      // Calcular utilidad si no viene.
-      double profit = (sale['profit'] as num?)?.toDouble() ?? 0.0;
-      if (profit <= 0) {
-        for (final it in items) {
-          final qty = (it['quantity'] as num?)?.toInt() ?? 0;
-          final price = (it['price'] as num?)?.toDouble() ?? 0.0;
-          final cost = (it['costAtSale'] as num?)?.toDouble() ?? 0.0;
-          final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
-          final line = (price * qty) - lineDiscount - (cost * qty);
-          profit += line < 0 ? 0 : line;
-        }
+    // Lectura tolerante de claves que pueden venir camelCase o snake_case:
+    T? _get<T>(Map m, String a, String b) =>
+        (m[a] as T?) ?? (m[b] as T?);
+
+    final saleId = _get<String>(sale, 'id', 'id') ?? _uuid.v4();
+    final customerId = _get<String>(sale, 'customerId', 'customer_id');
+    final paymentMethod =
+        _get<String>(sale, 'paymentMethod', 'payment_method') ?? 'Efectivo';
+    final createdAt =
+        _get<String>(sale, 'createdAt', 'created_at') ??
+            DateTime.now().toIso8601String();
+
+    final discount = (_get<num>(sale, 'discount', 'discount') ?? 0).toDouble();
+    final shipping = (_get<num>(sale, 'shipping', 'shipping') ??
+            _get<num>(sale, 'shippingCost', 'shipping_cost') ??
+            0)
+        .toDouble();
+
+    // Calcular utilidad por items (sin incluir envío).
+    double profit = (_get<num>(sale, 'profit', 'profit') ?? 0).toDouble();
+    if (profit <= 0) {
+      for (final it in items) {
+        final qty = (_get<num>(it, 'quantity', 'quantity') ?? 0).toInt();
+        final price = (_get<num>(it, 'price', 'price') ?? 0).toDouble();
+        final cost = (_get<num>(it, 'costAtSale', 'cost_at_sale') ?? 0).toDouble();
+        final lineDiscount =
+            (_get<num>(it, 'lineDiscount', 'line_discount') ?? 0).toDouble();
+        final line = (price * qty) - lineDiscount - (cost * qty);
+        if (line > 0) profit += line;
       }
+    }
 
-      // Subtotal por items (sin envío)
-      final subtotalItems = items.fold<double>(0.0, (acc, it) {
-        final qty = (it['quantity'] as num?)?.toInt() ?? 0;
-        final price = (it['price'] as num?)?.toDouble() ?? 0.0;
-        final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
-        final sub = (price * qty) - lineDiscount;
-        return acc + (sub < 0 ? 0 : sub);
-      });
+    // Subtotal por items (sin envío)
+    final subtotalItems = items.fold<double>(0.0, (acc, it) {
+      final qty = (_get<num>(it, 'quantity', 'quantity') ?? 0).toInt();
+      final price = (_get<num>(it, 'price', 'price') ?? 0).toDouble();
+      final lineDiscount =
+          (_get<num>(it, 'lineDiscount', 'line_discount') ?? 0).toDouble();
+      final sub = (price * qty) - lineDiscount;
+      return acc + (sub < 0 ? 0 : sub);
+    });
 
-      final shipping = (sale['shipping'] as num?)?.toDouble() ?? 0.0;
-      final discount = (sale['discount'] as num?)?.toDouble() ?? 0.0;
+    final total =
+        (_get<num>(sale, 'total', 'total')?.toDouble()) ??
+            ((subtotalItems - discount) + shipping);
 
-      // Si POS ya mandó total lo respetamos; si no, lo calculamos.
-      final total = (sale['total'] as num?)?.toDouble() ??
-          ((subtotalItems - discount) + shipping);
-
+    await db.transaction((txn) async {
       // Insert venta
       await txn.insert('sales', {
         'id': saleId,
-        'customerId': sale['customerId'],
+        'customer_id': customerId,
         'total': total,
         'discount': discount,
-        'shipping': shipping,
-        'profit': profit, // excluye envío
-        'paymentMethod': (sale['paymentMethod'] as String?) ?? 'Efectivo',
-        'createdAt':
-            (sale['createdAt'] as String?) ?? DateTime.now().toIso8601String(),
+        'shipping': shipping, // columna en snake_case
+        'profit': profit,     // utilidad sin envío
+        'payment_method': paymentMethod,
+        'created_at': createdAt,
       });
 
-      // Insert items + actualizar stock + movimiento
+      // Items + stock + movimientos
       for (final it in items) {
-        final itemId = (it['id'] as String?) ?? _uuid.v4();
-        final productId = (it['productId'] as String?) ?? '';
-        final qty = (it['quantity'] as num?)?.toInt() ?? 0;
-        final price = (it['price'] as num?)?.toDouble() ?? 0.0;
-        final cost = (it['costAtSale'] as num?)?.toDouble() ?? 0.0;
-        final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
+        final itemId = _get<String>(it, 'id', 'id') ?? _uuid.v4();
+        final productId = _get<String>(it, 'productId', 'product_id') ?? '';
+        final qty = (_get<num>(it, 'quantity', 'quantity') ?? 0).toInt();
+        final price = (_get<num>(it, 'price', 'price') ?? 0).toDouble();
+        final cost = (_get<num>(it, 'costAtSale', 'cost_at_sale') ?? 0).toDouble();
+        final lineDiscount =
+            (_get<num>(it, 'lineDiscount', 'line_discount') ?? 0).toDouble();
         final subtotal = (price * qty) - lineDiscount;
 
         if (productId.isEmpty) {
-          throw StateError('Falta productId en un item de venta');
+          throw StateError('Falta product_id en un item de venta');
         }
 
         await txn.insert('sale_items', {
           'id': itemId,
-          'saleId': saleId,
-          'productId': productId,
+          'sale_id': saleId,
+          'product_id': productId,
           'quantity': qty,
           'price': price,
-          'costAtSale': cost,
-          'lineDiscount': lineDiscount,
+          'cost_at_sale': cost,
+          'line_discount': lineDiscount,
           'subtotal': subtotal < 0 ? 0 : subtotal,
-          'createdAt': DateTime.now().toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
         });
 
         await txn.rawUpdate(
@@ -93,16 +107,37 @@ class SaleRepository {
 
         await txn.insert('inventory_movements', {
           'id': _uuid.v4(),
-          'productId': productId,
+          'product_id': productId,
           'quantity': -qty,
           'reason': 'SALE',
-          'createdAt': DateTime.now().toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
         });
       }
     });
   }
 
-  /// Historial de ventas (opcional filtrado por cliente).
+  Future<List<Map<String, Object?>>> topCustomers(
+      DateTime from, DateTime to) async {
+    final db = await _db();
+    final fromIso =
+        DateTime(from.year, from.month, from.day).toIso8601String();
+    final toIso =
+        DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
+
+    return db.rawQuery('''
+      SELECT s.customer_id,
+             COALESCE(c.name, 'Mostrador') AS name,
+             COUNT(*) AS orders,
+             SUM(s.total)  AS total,
+             SUM(s.profit) AS profit
+      FROM sales s
+      LEFT JOIN customers c ON c.id = s.customer_id
+      WHERE s.created_at BETWEEN ? AND ?
+      GROUP BY s.customer_id, c.name
+      ORDER BY total DESC
+    ''', [fromIso, toIso]);
+  }
+
   Future<List<Map<String, Object?>>> history({
     String? customerId,
     required DateTime from,
@@ -115,46 +150,22 @@ class SaleRepository {
         DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
 
     final args = <Object?>[fromIso, toIso];
-    final where = StringBuffer('s.createdAt BETWEEN ? AND ?');
+    final where = StringBuffer('s.created_at BETWEEN ? AND ?');
     if (customerId != null) {
-      where.write(' AND s.customerId = ?');
+      where.write(' AND s.customer_id = ?');
       args.add(customerId);
     }
 
     return db.rawQuery('''
-      SELECT s.id, s.customerId, s.total, s.discount, s.shipping, s.profit,
-             s.paymentMethod, s.createdAt,
-             (SELECT COUNT(*) FROM sale_items si WHERE si.saleId = s.id) AS items
+      SELECT s.id, s.customer_id, s.total, s.discount, s.shipping, s.profit,
+             s.payment_method, s.created_at,
+             (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) AS items
       FROM sales s
       WHERE $where
-      ORDER BY s.createdAt DESC
+      ORDER BY s.created_at DESC
     ''', args);
   }
 
-  /// Top clientes por rango.
-  Future<List<Map<String, Object?>>> topCustomers(
-      DateTime from, DateTime to) async {
-    final db = await _db();
-    final fromIso =
-        DateTime(from.year, from.month, from.day).toIso8601String();
-    final toIso =
-        DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
-
-    return db.rawQuery('''
-      SELECT s.customerId,
-             COALESCE(c.name, 'Mostrador') AS name,
-             COUNT(*) AS orders,
-             SUM(s.total)  AS total,
-             SUM(s.profit) AS profit
-      FROM sales s
-      LEFT JOIN customers c ON c.id = s.customerId
-      WHERE s.createdAt BETWEEN ? AND ?
-      GROUP BY s.customerId, c.name
-      ORDER BY total DESC
-    ''', [fromIso, toIso]);
-  }
-
-  /// Resumen de utilidad/ventas para día, semana, mes, año.
   Future<Map<String, double>> summary(DateTime from, DateTime to) async {
     final db = await _db();
     final fromIso =
@@ -169,7 +180,7 @@ class SaleRepository {
              COALESCE(SUM(shipping),0) AS shipping,
              COUNT(*) AS orders
       FROM sales
-      WHERE createdAt BETWEEN ? AND ?
+      WHERE created_at BETWEEN ? AND ?
     ''', [fromIso, toIso]);
 
     final m = rows.isNotEmpty ? rows.first : <String, Object?>{};

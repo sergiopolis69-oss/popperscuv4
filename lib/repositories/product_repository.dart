@@ -1,69 +1,98 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:uuid/uuid.dart';
-
-import '../services/db.dart';
+import '../db/db.dart';
 
 class ProductRepository {
-  final _uuid = const Uuid();
-  Future<Database> _db() => AppDatabase().database;
+  Future<Database> get _db async => AppDatabase.instance.database;
 
   Future<List<Map<String, Object?>>> all() async {
-    final db = await _db();
-    return db.query('products', orderBy: 'name COLLATE NOCASE');
+    final db = await _db;
+    return db.query('products', orderBy: 'updated_at DESC, name ASC');
   }
 
-  Future<void> deleteById(String id) async {
-    final db = await _db();
-    await db.delete('products', where: 'id = ?', whereArgs: [id]);
-  }
-
-  /// Inserta o actualiza (por id). Map tolerante con camelCase/snake_case.
-  Future<void> upsertProduct(Map<String, Object?> data) async {
-    T? _get<T>(Map m, String a, String b) =>
-        (m[a] as T?) ?? (m[b] as T?);
-
-    final db = await _db();
-    final id = _get<String>(data, 'id', 'id') ?? _uuid.v4();
-    final name = _get<String>(data, 'name', 'name') ?? '';
-    final sku = _get<String>(data, 'sku', 'sku');
-    final category = _get<String>(data, 'category', 'category');
-    final price = (_get<num>(data, 'price', 'price') ?? 0).toDouble();
-    final cost = (_get<num>(data, 'cost', 'cost') ?? 0).toDouble();
-    final stock = (_get<num>(data, 'stock', 'stock') ?? 0).toInt();
-
-    await db.insert(
+  Future<List<Map<String, Object?>>> searchByNameOrSku(String q) async {
+    final db = await _db;
+    final like = '%${q.trim()}%';
+    return db.query(
       'products',
-      {
-        'id': id,
-        'name': name,
-        'sku': sku,
-        'category': category,
-        'price': price,
-        'cost': cost,
-        'stock': stock,
-        'updated_at': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'name LIKE ? OR sku LIKE ?',
+      whereArgs: [like, like],
+      orderBy: 'name ASC',
+      limit: 50,
     );
   }
 
   Future<List<String>> categoriesDistinct() async {
-    final db = await _db();
+    final db = await _db;
     final rows = await db.rawQuery('''
-      SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND TRIM(category) <> '' ORDER BY category COLLATE NOCASE
+      SELECT DISTINCT category FROM products
+      WHERE category IS NOT NULL AND TRIM(category) <> ''
+      ORDER BY category COLLATE NOCASE
     ''');
-    return rows.map((r) => (r['category'] as String?) ?? '').where((s) => s.isNotEmpty).toList();
+    return rows.map((e) => (e['category'] as String)).toList();
   }
 
-  Future<List<Map<String, Object?>>> searchByNameOrSku(String query) async {
-    final db = await _db();
-    final q = '%${query.trim()}%';
-    return db.query(
-      'products',
-      where: '(name LIKE ? OR sku LIKE ?)',
-      whereArgs: [q, q],
-      orderBy: 'name COLLATE NOCASE',
-      limit: 50,
-    );
+  /// Inserta/actualiza con Map (llaves snake_case)
+  Future<void> upsertProduct(Map<String, Object?> data) async {
+    final db = await _db;
+    final id = (data['id']?.toString() ?? genId());
+    final now = nowIso();
+    final row = {
+      'id': id,
+      'name': data['name'],
+      'sku': data['sku'],
+      'category': data['category'],
+      'price': (data['price'] as num).toDouble(),
+      'cost': (data['cost'] as num).toDouble(),
+      'stock': (data['stock'] as num).toInt(),
+      'updated_at': now,
+      'created_at': data['created_at'] ?? now,
+    };
+    await db.insert('products', row, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Wrapper compatible con UI que usa argumentos con nombre
+  Future<void> upsertProductNamed({
+    String? id,
+    required String name,
+    String? sku,
+    String? category,
+    required double price,
+    required double cost,
+    required int stock,
+  }) async {
+    await upsertProduct({
+      'id': id,
+      'name': name,
+      'sku': sku,
+      'category': category,
+      'price': price,
+      'cost': cost,
+      'stock': stock,
+    });
+  }
+
+  Future<void> deleteById(String id) async {
+    final db = await _db;
+    await db.delete('products', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> adjustStock(String productId, int delta, {String? note}) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      // Lee stock actual
+      final cur = await txn.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
+      if (cur.isEmpty) return;
+      final current = (cur.first['stock'] as int);
+      final newStock = current + delta;
+      await txn.update('products', {'stock': newStock, 'updated_at': nowIso()},
+          where: 'id = ?', whereArgs: [productId]);
+      await txn.insert('inventory_movements', {
+        'id': genId(),
+        'product_id': productId,
+        'delta': delta,
+        'note': note ?? 'ajuste',
+        'created_at': nowIso(),
+      });
+    });
   }
 }

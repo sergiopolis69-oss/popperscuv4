@@ -28,7 +28,7 @@ class _ProductsPageState extends ConsumerState<ProductsPage> {
     _priceCtrl.text = ((row['price'] as num?)?.toString() ?? '0');
     _stockCtrl.text = ((row['stock'] as num?)?.toString() ?? '0');
     _selectedCategory = (row['category'] as String?);
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _save() async {
@@ -62,22 +62,31 @@ class _ProductsPageState extends ConsumerState<ProductsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Productos')),
-      body: FutureBuilder<List<Map<String, Object?>>>>(
+      body: FutureBuilder<List<Map<String, Object?>>>(
         future: ProductRepository().all(),
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final rows = snap.data!;
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final rows = snapshot.data ?? const <Map<String, Object?>>[];
+          if (rows.isEmpty) {
+            return const Center(child: Text('Sin productos. Usa el botón + para agregar.'));
+          }
           return ListView.separated(
             itemCount: rows.length,
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, i) {
               final p = rows[i];
+              final name = (p['name'] ?? '') as String;
+              final sku = (p['sku'] ?? '-') as String;
+              final stock = (p['stock'] ?? 0).toString();
+              final cost = ((p['cost'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
+              final price = ((p['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
               return ListTile(
-                title: Text((p['name'] ?? '') as String),
-                subtitle: Text('SKU: ${(p['sku'] ?? '-') as String}  |  Stock: ${(p['stock'] ?? 0)}  |  Compra: ${(p['cost'] ?? 0)}  |  Venta: ${(p['price'] ?? 0)}'),
+                title: Text(name),
+                subtitle: Text('SKU: $sku  |  Stock: $stock  |  Compra: $cost  |  Venta: $price'),
                 onTap: () async {
                   await _loadForEdit(p);
-                  // open editor
                   if (!mounted) return;
                   showModalBottomSheet(
                     context: context,
@@ -180,7 +189,9 @@ class _EditorSheet extends StatelessWidget {
                     Expanded(
                       child: DropdownButtonFormField<String>(
                         isExpanded: true,
-                        value: selectedCategory != null && (selectedCategory?.isNotEmpty ?? false) && list.contains(selectedCategory) ? selectedCategory : null,
+                        value: (selectedCategory != null && (selectedCategory!.isNotEmpty) && list.contains(selectedCategory))
+                            ? selectedCategory
+                            : null,
                         items: list.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                         onChanged: onCategoryChanged,
                         decoration: const InputDecoration(labelText: 'Categoría (existente)'),

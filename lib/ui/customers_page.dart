@@ -19,7 +19,7 @@ class _CustomersPageState extends ConsumerState<CustomersPage> {
     _edit = row;
     _nameCtrl.text = (row['name'] ?? '') as String;
     _phoneCtrl.text = (row['phone'] ?? '') as String;
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _save() async {
@@ -45,11 +45,16 @@ class _CustomersPageState extends ConsumerState<CustomersPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Clientes')),
-      body: FutureBuilder<List<Map<String, Object?>>>>(
+      body: FutureBuilder<List<Map<String, Object?>>>(
         future: CustomerRepository().all(),
-        builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final rows = snap.data!;
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final rows = snapshot.data ?? const <Map<String, Object?>>[];
+          if (rows.isEmpty) {
+            return const Center(child: Text('Sin clientes. Usa el botón + para agregar.'));
+          }
           return ListView.separated(
             itemCount: rows.length,
             separatorBuilder: (_, __) => const Divider(height: 1),

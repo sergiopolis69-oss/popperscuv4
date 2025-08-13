@@ -39,7 +39,7 @@ class SaleRepository {
           'quantity': q,
           'price': (it['price'] as num).toDouble(),
           'cost_at_sale': (it['cost_at_sale'] ?? it['cost']) as num,
-          'line_discount': (it['line_discount'] ?? 0) as num,
+          'line_discount': (it['line_discount'] ?? it['lineDiscount'] ?? 0) as num,
           'subtotal': (it['subtotal'] ?? 0) as num,
         });
 

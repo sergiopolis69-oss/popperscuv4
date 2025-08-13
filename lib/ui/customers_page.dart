@@ -1,141 +1,204 @@
-
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../repositories/customer_repository.dart';
+import 'package:intl/intl.dart';
+import '../repositories/sale_repository.dart';
 
-class CustomersPage extends ConsumerStatefulWidget {
-  const CustomersPage({super.key});
+class TopCustomersPage extends StatefulWidget {
+  const TopCustomersPage({super.key});
 
   @override
-  ConsumerState<CustomersPage> createState() => _CustomersPageState();
+  State<TopCustomersPage> createState() => _TopCustomersPageState();
 }
 
-class _CustomersPageState extends ConsumerState<CustomersPage> {
-  final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  Map<String, Object?>? _edit;
+class _TopCustomersPageState extends State<TopCustomersPage> {
+  DateTime _anchor = DateTime.now();
+  String _period = 'Mes'; // Día, Semana, Mes, Año
+  final _fmtDate = DateFormat('yyyy-MM-dd');
+  final _fmtDT = DateFormat('yyyy-MM-dd HH:mm');
 
-  Future<void> _loadForEdit(Map<String, Object?> row) async {
-    _edit = row;
-    _nameCtrl.text = (row['name'] ?? '') as String;
-    _phoneCtrl.text = (row['phone'] ?? '') as String;
-    if (mounted) setState(() {});
+  (DateTime, DateTime) _range() {
+    final a = DateTime(_anchor.year, _anchor.month, _anchor.day);
+    switch (_period) {
+      case 'Día':
+        return (a, a.add(const Duration(days: 1)));
+      case 'Semana':
+        final w0 = a.subtract(Duration(days: a.weekday - 1));
+        final w1 = w0.add(const Duration(days: 7));
+        return (w0, w1);
+      case 'Año':
+        final y0 = DateTime(a.year, 1, 1);
+        final y1 = DateTime(a.year + 1, 1, 1);
+        return (y0, y1);
+      case 'Mes':
+      default:
+        final m0 = DateTime(a.year, a.month, 1);
+        final m1 = DateTime(a.year, a.month + 1, 1);
+        return (m0, m1);
+    }
   }
 
-  Future<void> _save() async {
-    await CustomerRepository().upsertCustomerNamed(
-      id: _edit?['id'] as String?,
-      name: _nameCtrl.text.trim(),
-      phone: (() {
-        final p = _phoneCtrl.text.trim();
-        return p.isEmpty ? null : p;
-      })(),
+  Future<void> _pickDate() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _anchor,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
     );
-    if (!mounted) return;
-    Navigator.pop(context);
-    setState(() {});
-  }
-
-  Future<void> _delete(String id) async {
-    await CustomerRepository().deleteById(id);
-    setState(() {});
+    if (d != null) setState(() => _anchor = d);
   }
 
   @override
   Widget build(BuildContext context) {
+    final (from, to) = _range();
     return Scaffold(
-      appBar: AppBar(title: const Text('Clientes')),
-      body: FutureBuilder<List<Map<String, Object?>>>(
-        future: CustomerRepository().all(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final rows = snapshot.data ?? const <Map<String, Object?>>[];
-          if (rows.isEmpty) {
-            return const Center(child: Text('Sin clientes. Usa el botón + para agregar.'));
-          }
-          return ListView.separated(
-            itemCount: rows.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, i) {
-              final c = rows[i];
-              return ListTile(
-                title: Text((c['name'] ?? '') as String),
-                subtitle: Text((c['phone'] ?? '-') as String),
-                onTap: () async {
-                  await _loadForEdit(c);
-                  if (!mounted) return;
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    builder: (_) => _EditorSheet(
-                      nameCtrl: _nameCtrl,
-                      phoneCtrl: _phoneCtrl,
-                      onSave: _save,
-                    ),
-                  );
-                },
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => _delete((c['id'] ?? '') as String),
+      appBar: AppBar(title: const Text('Mejores clientes')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _pickDate,
+                    child: Text('Fecha: ${_fmtDate.format(_anchor)}'),
+                  ),
                 ),
-              );
-            },
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          _edit = null;
-          _nameCtrl.clear();
-          _phoneCtrl.clear();
-          showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            builder: (_) => _EditorSheet(
-              nameCtrl: _nameCtrl,
-              phoneCtrl: _phoneCtrl,
-              onSave: _save,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _period,
+                    onChanged: (v) => setState(() => _period = v ?? 'Mes'),
+                    items: const [
+                      DropdownMenuItem(value: 'Día', child: Text('Día')),
+                      DropdownMenuItem(value: 'Semana', child: Text('Semana')),
+                      DropdownMenuItem(value: 'Mes', child: Text('Mes')),
+                      DropdownMenuItem(value: 'Año', child: Text('Año')),
+                    ],
+                    decoration: const InputDecoration(labelText: 'Periodo'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => setState(() {}),
+                  child: const Text('Actualizar'),
+                ),
+              ],
             ),
-          );
-        },
-        label: const Text('Agregar'),
-        icon: const Icon(Icons.add),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: FutureBuilder<List<Map<String, Object?>>>(
+              future: SaleRepository().topCustomers(from, to),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final rows = snapshot.data ?? const <Map<String, Object?>>[];
+                return ListView.separated(
+                  itemCount: rows.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final r = rows[i];
+                    final customerId = (r['customer_id'] as String?) ?? '';
+                    final name = (r['name'] as String?) ?? customerId;
+                    final orders = (r['orders'] as num?)?.toInt() ?? 0;
+                    final total = (r['total'] as num?)?.toDouble() ?? 0.0;
+                    final profit = (r['profit'] as num?)?.toDouble() ?? 0.0;
+                    final pct = total == 0 ? 0.0 : (profit / total * 100.0);
+                    return ListTile(
+                      title: Text(name),
+                      subtitle: Text(
+                        'Órdenes: ${orders.toString()} · Utilidad: \$${profit.toStringAsFixed(2)} · ${pct.toStringAsFixed(1)}%',
+                      ),
+                      trailing: Text(
+                        '\$${total.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      onTap: () {
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          builder: (_) => _CustomerHistorySheet(
+                            customerId: customerId,
+                            from: from,
+                            to: to,
+                            fmtDT: _fmtDT,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _EditorSheet extends StatelessWidget {
-  final TextEditingController nameCtrl;
-  final TextEditingController phoneCtrl;
-  final VoidCallback onSave;
-
-  const _EditorSheet({
-    required this.nameCtrl,
-    required this.phoneCtrl,
-    required this.onSave,
+class _CustomerHistorySheet extends StatelessWidget {
+  final String customerId;
+  final DateTime from;
+  final DateTime to;
+  final DateFormat fmtDT;
+  const _CustomerHistorySheet({
+    required this.customerId,
+    required this.from,
+    required this.to,
+    required this.fmtDT,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
-            TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Teléfono'), keyboardType: TextInputType.phone),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(onPressed: onSave, child: const Text('Guardar')),
-            ),
-          ],
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: FutureBuilder<List<Map<String, Object?>>>(
+          future:
+              SaleRepository().history(customerId: customerId, from: from, to: to),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const SizedBox(
+                height: 200,
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            final rows = snapshot.data!;
+            double total = 0.0;
+            double profit = 0.0;
+            for (final r in rows) {
+              total += (r['total'] as num?)?.toDouble() ?? 0.0;
+              profit += (r['profit'] as num?)?.toDouble() ?? 0.0;
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: Text('\$${total.toStringAsFixed(2)}'),
+                  subtitle: Text('${rows.length} ventas'),
+                  trailing: Text('Utilidad \$${profit.toStringAsFixed(2)}'),
+                ),
+                const Divider(height: 1),
+                ...rows.map((r) {
+                  final whenStr = (r['created_at'] as String?) ?? '';
+                  DateTime? when;
+                  try {
+                    when = DateTime.parse(whenStr);
+                  } catch (_) {}
+                  final t = (r['total'] as num?)?.toDouble() ?? 0.0;
+                  final p = (r['profit'] as num?)?.toDouble() ?? 0.0;
+                  return ListTile(
+                    title: Text('\$${t.toStringAsFixed(2)}'),
+                    subtitle: Text(when != null ? fmtDT.format(when) : whenStr),
+                    trailing: Text('Utilidad \$${p.toStringAsFixed(2)}'),
+                  );
+                }).toList(),
+                const SizedBox(height: 12),
+              ],
+            );
+          },
         ),
       ),
     );

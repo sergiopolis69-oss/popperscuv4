@@ -1,66 +1,86 @@
 import 'package:flutter/material.dart';
-
-// Imports relativos para evitar conflictos.
-import 'sales_page.dart';
-import 'products_page.dart';
-import 'customers_page.dart';
-import 'sales_history_page.dart';
-import 'top_customers_page.dart';
-import 'profit_overview_page.dart';
-import 'reports_page.dart';
+import 'package:popperscuv/ui/products_page.dart';
+import 'package:popperscuv/ui/customers_page.dart';
+import 'package:popperscuv/ui/sales_page.dart';
+import 'package:popperscuv/ui/sales_history_page.dart';
+import 'package:popperscuv/ui/top_customers_page.dart';
+import 'package:popperscuv/ui/reports_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final tiles = <_NavItem>[
-      _NavItem('POS ventas', Icons.point_of_sale, () => const SalesPage()),
-      _NavItem('Inventario', Icons.inventory_2_outlined, () => const ProductsPage()),
-      _NavItem('Clientes', Icons.people_alt_outlined, () => const CustomersPage()),
-      _NavItem('Historial ventas', Icons.receipt_long_outlined, () => const SalesHistoryPage()),
-      _NavItem('Mejores clientes', Icons.emoji_events_outlined, () => const TopCustomersPage()),
-      _NavItem('Utilidad', Icons.trending_up_outlined, () => const ProfitOverviewPage()),
-      _NavItem('CSV / Reportes', Icons.file_download_outlined, () => const ReportsPage()),
+    final items = <_HomeItem>[
+      _HomeItem('Inventario', Icons.inventory_2, () => const ProductsPage()),
+      _HomeItem('Clientes', Icons.people_alt, () => const CustomersPage()),
+      _HomeItem('POS / Ventas', Icons.point_of_sale, () => const SalesPage()),
+      _HomeItem('Historial', Icons.receipt_long, () => const SalesHistoryPage()),
+      _HomeItem('Top clientes', Icons.leaderboard, () => const TopCustomersPage()),
+      _HomeItem('CSV / Reportes', Icons.table_view, () => const ReportsPage()),
     ];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('PoppersCUV')),
-      body: GridView.builder(
-        padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2, mainAxisSpacing: 16, crossAxisSpacing: 16, childAspectRatio: 1.2,
-        ),
-        itemCount: tiles.length,
-        itemBuilder: (ctx, i) {
-          final it = tiles[i];
-          return Card(
-            child: InkWell(
-              onTap: () => Navigator.push(
-                ctx, // <-- usar el BuildContext correcto
-                MaterialPageRoute(builder: (_) => it.builder()),
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(it.icon, size: 48),
-                    const SizedBox(height: 12),
-                    Text(it.title, textAlign: TextAlign.center),
-                  ],
-                ),
+      appBar: AppBar(
+        title: const Text('Poppers POS'),
+        centerTitle: true,
+      ),
+      body: Column(
+        children: [
+          const SizedBox(height: 16),
+          // Logo (asegúrate de tener assets/logo.png en pubspec)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Center(
+              child: Image.asset(
+                'assets/logo.png',
+                height: 72,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) =>
+                    const Icon(Icons.storefront, size: 72),
               ),
             ),
-          );
-        },
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: GridView.count(
+              padding: const EdgeInsets.all(16),
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              children: [
+                for (final it in items)
+                  Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => it.builder()),
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(it.icon, size: 36),
+                            const SizedBox(height: 8),
+                            Text(it.label),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _NavItem {
-  final String title;
+class _HomeItem {
+  final String label;
   final IconData icon;
   final Widget Function() builder;
-  _NavItem(this.title, this.icon, this.builder);
+  _HomeItem(this.label, this.icon, this.builder);
 }

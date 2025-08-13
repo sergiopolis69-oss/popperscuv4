@@ -10,9 +10,10 @@ class CustomerRepository {
     return db.query('customers', orderBy: 'name ASC');
   }
 
+  // API 1: nueva (map)
   Future<Map<String, Object?>> upsertCustomer(Map<String, Object?> data) async {
     final db = await AppDatabase().database;
-    final id = (data['id'] ?? _uuid.v4()) as String;
+    final id = (data['id'] ?? const Uuid().v4()) as String;
     final now = DateTime.now().toIso8601String();
 
     final row = {
@@ -28,5 +29,23 @@ class CustomerRepository {
       await db.insert('customers', row);
     }
     return row;
+  }
+
+  // API 2: compat (parámetros con nombre)
+  Future<Map<String, Object?>> upsertCustomerNamed({
+    String? id,
+    required String name,
+    String? phone,
+  }) async {
+    return upsertCustomer({
+      'id': id,
+      'name': name,
+      'phone': phone,
+    });
+  }
+
+  Future<void> deleteById(String id) async {
+    final db = await AppDatabase().database;
+    await db.delete('customers', where: 'id = ?', whereArgs: [id]);
   }
 }

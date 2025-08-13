@@ -109,7 +109,7 @@ class SaleRepository {
       'SELECT SUM(total) AS total, SUM(profit) AS profit FROM sales WHERE created_at >= ? AND created_at <= ?',
       [from.toIso8601String(), to.toIso8601String()],
     );
-    final m = rows.isNotEmpty ? rows.first : <String, Object?>{};
+    final m = rows.isNotEmpty ? rows.first else <String, Object?>{};
     final total = (m['total'] as num?)?.toDouble() ?? 0.0;
     final profit = (m['profit'] as num?)?.toDouble() ?? 0.0;
     final pct = total == 0 ? 0.0 : (profit / total * 100.0);

@@ -1,6 +1,5 @@
 
 import 'package:uuid/uuid.dart';
-import 'package:sqflite/sqflite.dart';
 import '../services/db.dart';
 
 class ProductRepository {
@@ -8,54 +7,42 @@ class ProductRepository {
 
   Future<List<Map<String, Object?>>> all() async {
     final db = await AppDatabase().database;
-    return db.query('products', orderBy: 'created_at DESC');
+    return db.query('products', orderBy: 'name ASC');
   }
 
-  Future<List<String>> categoriesDistinct() async {
+  Future<Map<String, Object?>> upsertProduct(Map<String, Object?> data) async {
     final db = await AppDatabase().database;
-    final rows = await db.rawQuery(
-      "SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND TRIM(category) <> '' ORDER BY category"
-    );
-    return rows.map((r) => (r['category'] as String)).toList();
-  }
-
-  Future<String> upsertProduct({
-    String? id,
-    required String name,
-    String? sku,
-    String? category,
-    required double cost,
-    required double price,
-    required int stock,
-  }) async {
-    final db = await AppDatabase().database;
+    final id = (data['id'] ?? _uuid.v4()) as String;
     final now = DateTime.now().toIso8601String();
-    final data = <String, Object?>{
-      'id': id ?? _uuid.v4(),
-      'name': name,
-      'sku': (sku == null || sku.trim().isEmpty) ? null : sku.trim(),
-      'category': (category == null || category.trim().isEmpty) ? null : category.trim(),
-      'cost': cost,
-      'price': price,
-      'stock': stock,
+
+    final row = {
+      'id': id,
+      'name': (data['name'] ?? '') as String,
+      'sku': data['sku'],
+      'category': data['category'],
+      'cost': (data['cost'] ?? 0) as Object?,
+      'price': (data['price'] ?? 0) as Object?,
+      'stock': (data['stock'] ?? 0) as Object?,
+      'created_at': (data['created_at'] ?? now) as String,
       'updated_at': now,
     };
-    if (id == null) data['created_at'] = now;
 
-    await db.insert('products', data, conflictAlgorithm: ConflictAlgorithm.replace);
-    return data['id'] as String;
+    // Intento de update, si no actualiza => insert
+    final updated = await db.update('products', row, where: 'id = ?', whereArgs: [id]);
+    if (updated == 0) {
+      await db.insert('products', row);
+    }
+    return row;
   }
 
-  Future<void> deleteById(String id) async {
+  Future<void> updateStock(String productId, int delta) async {
     final db = await AppDatabase().database;
-    await db.transaction((txn) async {
-      // limpia movimientos de inventario
-      await txn.delete('inventory_movements', where: 'product_id = ?', whereArgs: [id]);
-      // opcional: limpiar items de ventas que referencien (si existe la tabla)
-      try {
-        await txn.delete('sale_items', where: 'product_id = ?', whereArgs: [id]);
-      } catch (_) {}
-      await txn.delete('products', where: 'id = ?', whereArgs: [id]);
-    });
+    await db.rawUpdate('UPDATE products SET stock = stock + ? WHERE id = ?', [delta, productId]);
+  }
+
+  Future<List<String>> categories() async {
+    final db = await AppDatabase().database;
+    final rows = await db.rawQuery('SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category <> "" ORDER BY category');
+    return rows.map((e) => (e['category'] ?? '') as String).where((s) => s.isNotEmpty).toList();
   }
 }

@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../repositories/sale_repository.dart';
@@ -71,7 +70,8 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
                     labelText: 'Cliente (ID opcional)',
                     border: OutlineInputBorder(),
                   ),
-                  onChanged: (v) => setState(() => _customerId = v.trim().isEmpty ? null : v.trim()),
+                  onChanged: (v) =>
+                      setState(() => _customerId = v.trim().isEmpty ? null : v.trim()),
                 ),
                 const SizedBox(height: 8),
                 Align(
@@ -86,8 +86,9 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
           ),
           const Divider(height: 1),
           Expanded(
-            child: FutureBuilder<List<Map<String, Object?>>>>(
-              future: SaleRepository().history(customerId: _customerId, from: _from, to: _to),
+            child: FutureBuilder<List<Map<String, Object?>>>(
+              future: SaleRepository()
+                  .history(customerId: _customerId, from: _from, to: _to),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -109,18 +110,25 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
                           final r = rows[i];
                           final whenStr = (r['created_at'] as String?) ?? '';
                           DateTime? when;
-                          try { when = DateTime.parse(whenStr); } catch (_) {}
-                          final title = (r['customer_name'] as String?) ?? (r['customer_id'] as String? ?? 'Venta');
+                          try {
+                            when = DateTime.parse(whenStr);
+                          } catch (_) {}
+                          final title =
+                              (r['customer_name'] as String?) ??
+                                  (r['customer_id'] as String? ?? 'Venta');
                           final t = (r['total'] as num?)?.toDouble() ?? 0.0;
                           final p = (r['profit'] as num?)?.toDouble() ?? 0.0;
                           return ListTile(
                             title: Text(title),
-                            subtitle: Text(when != null ? _fmtDT.format(when) : whenStr),
+                            subtitle:
+                                Text(when != null ? _fmtDT.format(when) : whenStr),
                             trailing: Column(
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Text('\$${t.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                Text('\$${t.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold)),
                                 Text('Utilidad \$${p.toStringAsFixed(2)}'),
                               ],
                             ),
@@ -138,7 +146,9 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text('\$${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text('\$${total.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold)),
                               Text('Utilidad \$${profit.toStringAsFixed(2)}'),
                             ],
                           ),

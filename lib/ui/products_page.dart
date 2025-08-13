@@ -1,328 +1,209 @@
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../repositories/product_repository.dart';
-import '../services/db.dart';
 
-class ProductsPage extends StatefulWidget {
+class ProductsPage extends ConsumerStatefulWidget {
   const ProductsPage({super.key});
+
   @override
-  State<ProductsPage> createState() => _ProductsPageState();
+  ConsumerState<ProductsPage> createState() => _ProductsPageState();
 }
 
-class _ProductsPageState extends State<ProductsPage> {
-  String _query = '';
+class _ProductsPageState extends ConsumerState<ProductsPage> {
+  final _nameCtrl = TextEditingController();
+  final _skuCtrl = TextEditingController();
+  final _costCtrl = TextEditingController();
+  final _priceCtrl = TextEditingController();
+  final _stockCtrl = TextEditingController(text: '0');
 
-  String _asString(Object? v) => v?.toString() ?? '';
-  String _lower(Object? v) => _asString(v).toLowerCase();
-  String _idOf(Object o) { try { return (o as dynamic).id as String; } catch (_) { try { return (o as dynamic)['id'] as String; } catch (_) { return ''; } } }
-  String _nameOf(Object o) { try { return (o as dynamic).name as String; } catch (_) { try { return (o as dynamic)['name'] as String; } catch (_) { return ''; } } }
-  String? _skuOf(Object o) { try { return (o as dynamic).sku as String?; } catch (_) { try { return (o as dynamic)['sku'] as String?; } catch (_) { return null; } } }
-  String? _catOf(Object o) { try { return (o as dynamic).category as String?; } catch (_) { try { return (o as dynamic)['category'] as String?; } catch (_) { return null; } } }
-  int _stockOf(Object o) { try { return (o as dynamic).stock as int; } catch (_) { try { return (o as dynamic)['stock'] as int; } catch (_) { return 0; } } }
-  double _priceOf(Object o) { try { return ((o as dynamic).price as num).toDouble(); } catch (_) { try { return ((o as dynamic)['price'] as num).toDouble(); } catch (_) { return 0; } } }
-  double _costOf(Object o) { try { return ((o as dynamic).cost as num).toDouble(); } catch (_) { try { return ((o as dynamic)['cost'] as num).toDouble(); } catch (_) { return 0; } } }
+  String? _selectedCategory;
+  Map<String, Object?>? _edit;
 
-  Future<List<Object>> _loadProducts() async {
-    final list = await ProductRepository().all();
-    final objs = List<Object>.from(list);
-    if (_query.trim().isEmpty) return objs;
-    final q = _query.trim().toLowerCase();
-    return objs.where((p) =>
-      _lower(_nameOf(p)).contains(q) ||
-      _lower(_skuOf(p)).contains(q) ||
-      _lower(_catOf(p)).contains(q)
-    ).toList();
+  Future<void> _loadForEdit(Map<String, Object?> row) async {
+    _edit = row;
+    _nameCtrl.text = (row['name'] ?? '') as String;
+    _skuCtrl.text = (row['sku'] ?? '') as String;
+    _costCtrl.text = ((row['cost'] as num?)?.toString() ?? '0');
+    _priceCtrl.text = ((row['price'] as num?)?.toString() ?? '0');
+    _stockCtrl.text = ((row['stock'] as num?)?.toString() ?? '0');
+    _selectedCategory = (row['category'] as String?);
+    setState(() {});
   }
 
-  Future<void> _openForm({Object? editing}) async {
-    final changed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: ProductForm(editing: editing),
-      ),
+  Future<void> _save() async {
+    final repo = ProductRepository();
+    await repo.upsertProductNamed(
+      id: _edit?['id'] as String?,
+      name: _nameCtrl.text.trim(),
+      sku: (() {
+        final s = _skuCtrl.text.trim();
+        return s.isEmpty ? null : s;
+      })(),
+      category: (() {
+        final c = _selectedCategory?.trim() ?? '';
+        return c.isEmpty ? null : c;
+      })(),
+      cost: double.tryParse(_costCtrl.text) ?? 0.0,
+      price: double.tryParse(_priceCtrl.text) ?? 0.0,
+      stock: int.tryParse(_stockCtrl.text) ?? 0,
     );
-    if (changed == true) setState(() {});
+    if (!mounted) return;
+    Navigator.pop(context);
+    setState(() {});
+  }
+
+  Future<void> _delete(String id) async {
+    await ProductRepository().deleteById(id);
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Inventario')),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _openForm(),
-        child: const Icon(Icons.add),
+      appBar: AppBar(title: const Text('Productos')),
+      body: FutureBuilder<List<Map<String, Object?>>>>(
+        future: ProductRepository().all(),
+        builder: (context, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final rows = snap.data!;
+          return ListView.separated(
+            itemCount: rows.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, i) {
+              final p = rows[i];
+              return ListTile(
+                title: Text((p['name'] ?? '') as String),
+                subtitle: Text('SKU: ${(p['sku'] ?? '-') as String}  |  Stock: ${(p['stock'] ?? 0)}  |  Compra: ${(p['cost'] ?? 0)}  |  Venta: ${(p['price'] ?? 0)}'),
+                onTap: () async {
+                  await _loadForEdit(p);
+                  // open editor
+                  if (!mounted) return;
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => _EditorSheet(
+                      nameCtrl: _nameCtrl,
+                      skuCtrl: _skuCtrl,
+                      costCtrl: _costCtrl,
+                      priceCtrl: _priceCtrl,
+                      stockCtrl: _stockCtrl,
+                      selectedCategory: _selectedCategory,
+                      onCategoryChanged: (v) => setState(() => _selectedCategory = v),
+                      onSave: _save,
+                    ),
+                  );
+                },
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => _delete((p['id'] ?? '') as String),
+                ),
+              );
+            },
+          );
+        },
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: TextField(
-              decoration: const InputDecoration(
-                labelText: 'Buscar por nombre / SKU / categoría',
-                prefixIcon: Icon(Icons.search),
-              ),
-              onChanged: (v) => setState(() => _query = v),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          _edit = null;
+          _nameCtrl.clear();
+          _skuCtrl.clear();
+          _costCtrl.text = '0';
+          _priceCtrl.text = '0';
+          _stockCtrl.text = '0';
+          _selectedCategory = null;
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            builder: (_) => _EditorSheet(
+              nameCtrl: _nameCtrl,
+              skuCtrl: _skuCtrl,
+              costCtrl: _costCtrl,
+              priceCtrl: _priceCtrl,
+              stockCtrl: _stockCtrl,
+              selectedCategory: _selectedCategory,
+              onCategoryChanged: (v) => setState(() => _selectedCategory = v),
+              onSave: _save,
             ),
-          ),
-          Expanded(
-            child: FutureBuilder<List<Object>>(
-              future: _loadProducts(),
-              builder: (context, snap) {
-                final items = snap.data ?? const <Object>[];
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (items.isEmpty) {
-                  return const Center(child: Text('Sin artículos'));
-                }
-                return ListView.separated(
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const Divider(height: 0),
-                  itemBuilder: (c, i) {
-                    final p = items[i];
-                    final sku = _skuOf(p);
-                    final skuText = (sku == null || sku.isEmpty) ? "-" : sku;
-                    return ListTile(
-                      title: Text(_nameOf(p)),
-                      subtitle: Text('SKU: ' + skuText + '  |  Stock: ' + _stockOf(p).toString() +
-                        '  |  Compra: ' + _costOf(p).toStringAsFixed(2) +
-                        '  |  Venta: ' + _priceOf(p).toStringAsFixed(2)),
-                      onTap: () => _openForm(editing: p),
-                      trailing: Text('\$' + _priceOf(p).toStringAsFixed(2)),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+          );
+        },
+        label: const Text('Agregar'),
+        icon: const Icon(Icons.add),
       ),
     );
   }
 }
 
-class ProductForm extends StatefulWidget {
-  final Object? editing;
-  const ProductForm({super.key, this.editing});
-  @override
-  State<ProductForm> createState() => _ProductFormState();
-}
+class _EditorSheet extends StatelessWidget {
+  final TextEditingController nameCtrl;
+  final TextEditingController skuCtrl;
+  final TextEditingController costCtrl;
+  final TextEditingController priceCtrl;
+  final TextEditingController stockCtrl;
+  final String? selectedCategory;
+  final ValueChanged<String?> onCategoryChanged;
+  final VoidCallback onSave;
 
-class _ProductFormState extends State<ProductForm> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  final _skuCtrl = TextEditingController();
-  final _costCtrl = TextEditingController(text: '0');
-  final _priceCtrl = TextEditingController(text: '0');
-  final _stockCtrl = TextEditingController(text: '0');
-  final _newCategoryCtrl = TextEditingController();
-
-  String? _selectedCategory;
-  bool _addingNewCategory = false;
-  bool _saving = false;
-
-  static const _kNew = '__NEW__';
-
-  String _asString(Object? v) => v?.toString() ?? '';
-  String? _get(Object? o, String key) { try { return (o as dynamic)[key]?.toString(); } catch (_) { try { return (o as dynamic).toJson()[key]?.toString(); } catch (_) { return null; } } }
-  String _idOf(Object o) { try { return (o as dynamic).id as String; } catch (_) { try { return (o as dynamic)['id'] as String; } catch (_) { return ''; } } }
-
-  @override
-  void initState() {
-    super.initState();
-    final e = widget.editing;
-    if (e != null) {
-      _nameCtrl.text = _get(e, 'name') ?? '';
-      _skuCtrl.text = _get(e, 'sku') ?? '';
-      _costCtrl.text = (_get(e, 'cost') ?? '0');
-      _priceCtrl.text = (_get(e, 'price') ?? '0');
-      _stockCtrl.text = (_get(e, 'stock') ?? '0');
-      _selectedCategory = _get(e, 'category');
-    }
-  }
-
-  Future<List<String>> _loadCategories() async {
-    final list = await ProductRepository().categoriesDistinct();
-    if (_selectedCategory != null && _selectedCategory!.trim().isNotEmpty && !list.contains(_selectedCategory)) {
-      list.add(_selectedCategory!);
-    }
-    return list;
-  }
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _skuCtrl.dispose();
-    _costCtrl.dispose();
-    _priceCtrl.dispose();
-    _stockCtrl.dispose();
-    _newCategoryCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _confirmDelete(String id) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Eliminar artículo'),
-        content: const Text('Esta acción no se puede deshacer. ¿Deseas continuar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      setState(() => _saving = true);
-      try {
-        await ProductRepository().deleteById(id);
-        if (!mounted) return;
-        Navigator.pop(context, true);
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al eliminar: $e')));
-      } finally {
-        if (mounted) setState(() => _saving = false);
-      }
-    }
-  }
+  const _EditorSheet({
+    required this.nameCtrl,
+    required this.skuCtrl,
+    required this.costCtrl,
+    required this.priceCtrl,
+    required this.stockCtrl,
+    required this.selectedCategory,
+    required this.onCategoryChanged,
+    required this.onSave,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isEditing = widget.editing != null;
-    final editingId = isEditing ? _idOf(widget.editing!) : null;
-
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(isEditing ? 'Editar artículo' : 'Nuevo artículo', style: Theme.of(context).textTheme.titleLarge),
-                  if (isEditing)
-                    IconButton(
-                      icon: const Icon(Icons.delete_forever),
-                      color: Theme.of(context).colorScheme.error,
-                      onPressed: _saving ? null : () => _confirmDelete(editingId!),
-                      tooltip: 'Eliminar artículo',
-                    )
-                ],
-              ),
-              const SizedBox(height: 8),
-              TextFormField(
-                controller: _nameCtrl,
-                decoration: const InputDecoration(labelText: 'Nombre'),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Requerido' : null,
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _skuCtrl,
-                      decoration: const InputDecoration(labelText: 'SKU'),
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
+            TextField(controller: skuCtrl, decoration: const InputDecoration(labelText: 'SKU')),
+            TextField(controller: costCtrl, decoration: const InputDecoration(labelText: 'Costo'), keyboardType: TextInputType.number),
+            TextField(controller: priceCtrl, decoration: const InputDecoration(labelText: 'Precio'), keyboardType: TextInputType.number),
+            TextField(controller: stockCtrl, decoration: const InputDecoration(labelText: 'Stock'), keyboardType: TextInputType.number),
+            const SizedBox(height: 12),
+            FutureBuilder<List<String>>(
+              future: ProductRepository().categoriesDistinct(),
+              builder: (context, snap) {
+                final list = snap.data ?? const <String>[];
+                return Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        value: selectedCategory != null && (selectedCategory?.isNotEmpty ?? false) && list.contains(selectedCategory) ? selectedCategory : null,
+                        items: list.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                        onChanged: onCategoryChanged,
+                        decoration: const InputDecoration(labelText: 'Categoría (existente)'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FutureBuilder<List<String>>(
-                      future: _loadCategories(),
-                      builder: (context, snap) {
-                        final items = snap.data ?? const <String>[];
-                        return DropdownButtonFormField<String>(
-                          value: _addingNewCategory
-                              ? _kNew
-                              : (items.contains(_selectedCategory) ? _selectedCategory : null),
-                          items: [
-                            ...items.map((c) => DropdownMenuItem(value: c, child: Text(c))),
-                            const DropdownMenuItem(value: _kNew, child: Text('Agregar nueva categoría…')),
-                          ],
-                          onChanged: (v) {
-                            setState(() {
-                              if (v == _kNew) {
-                                _addingNewCategory = true;
-                                _selectedCategory = null;
-                              } else {
-                                _addingNewCategory = false;
-                                _selectedCategory = v;
-                              }
-                            });
-                          },
-                          decoration: const InputDecoration(labelText: 'Categoría'),
-                        );
-                      },
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        initialValue: selectedCategory ?? '',
+                        onChanged: onCategoryChanged,
+                        decoration: const InputDecoration(labelText: 'Nueva categoría'),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              if (_addingNewCategory)
-                TextFormField(
-                  controller: _newCategoryCtrl,
-                  decoration: const InputDecoration(labelText: 'Nueva categoría'),
-                ),
-              Row(
-                children: [
-                  Expanded(child: TextFormField(
-                    controller: _costCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Precio compra'),
-                  )),
-                  const SizedBox(width: 8),
-                  Expanded(child: TextFormField(
-                    controller: _priceCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Precio venta'),
-                  )),
-                ],
-              ),
-              TextFormField(
-                controller: _stockCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Stock'),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.save),
-                  label: Text(_saving ? 'Guardando…' : 'Guardar'),
-                  onPressed: _saving ? null : () async {
-                    if (!(_formKey.currentState?.validate() ?? false)) return;
-                    setState(() => _saving = true);
-                    try {
-                      final category = _addingNewCategory
-                        ? (_newCategoryCtrl.text.trim().isEmpty ? null : _newCategoryCtrl.text.trim())
-                        : _selectedCategory;
-
-                      await ProductRepository().upsertProduct(
-                        id: isEditing ? editingId : null,
-                        name: _nameCtrl.text.trim(),
-                        sku: _skuCtrl.text.trim().isEmpty ? null : _skuCtrl.text.trim(),
-                        category: (category == null || category.trim().isEmpty) ? null : category.trim(),
-                        cost: double.tryParse(_costCtrl.text) ?? 0,
-                        price: double.tryParse(_priceCtrl.text) ?? 0,
-                        stock: int.tryParse(_stockCtrl.text) ?? 0,
-                      );
-                      if (!mounted) return;
-                      Navigator.pop(context, true);
-                    } catch (e) {
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-                    } finally {
-                      if (mounted) setState(() => _saving = false);
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(onPressed: onSave, child: const Text('Guardar')),
+            ),
+          ],
         ),
       ),
     );

@@ -1,31 +1,34 @@
-name: popperscuv2
-description: Inventario/ventas/clientes offline con utilidad y reportes.
+name: popperscuv
+description: POS e inventario offline (Flutter + SQLite)
 publish_to: "none"
-version: 0.9.0+9
+version: 1.0.0+1
 
 environment:
-  sdk: ">=3.3.0 <4.0.0"
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
+
+  # DB y almacenamiento
+  sqflite: ^2.3.0
+  path_provider: ^2.1.0
+
+  # CSV e import/export
+  csv: ^6.0.0
+  file_picker: ^8.0.0
+
+  # Utilidades
+  uuid: ^4.2.1
   cupertino_icons: ^1.0.6
-  sqflite: any
-  path_provider: any
-  intl: any
-  csv: any
-  flutter_riverpod: any
-  uuid: any
-  file_picker: any
-  file_saver: any
-  share_plus: any
-  flutter_typeahead: any
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ^3.0.1
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/logo.png

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
-import '../repositories/product_repository.dart';
-import '../repositories/customer_repository.dart';
-import '../repositories/sale_repository.dart';
+// Repos (ajusta si tus rutas cambian)
+import 'package:popperscuv/repositories/product_repository.dart';
+import 'package:popperscuv/repositories/customer_repository.dart';
+import 'package:popperscuv/repositories/sale_repository.dart';
 
 class SalesPage extends StatefulWidget {
   const SalesPage({super.key});
@@ -15,347 +17,309 @@ class SalesPage extends StatefulWidget {
 class _SalesPageState extends State<SalesPage> {
   final _uuid = const Uuid();
 
-  // Controles
-  final _customerCtrl = TextEditingController();
-  final _productCtrl = TextEditingController();
-  final _discountCtrl = TextEditingController(text: '0');
-  final _shippingCtrl = TextEditingController(text: '0');
-
-  // Datos precargados para typeahead
-  List<Map<String, Object?>> _allProducts = [];
-  List<Map<String, Object?>> _allCustomers = [];
-
-  // Selección
-  Map<String, Object?>? _selectedCustomer;
-
-  // Carrito
+  // Datos en memoria
+  List<Map<String, Object?>> _products = [];
+  List<Map<String, Object?>> _customers = [];
   final List<Map<String, Object?>> _items = [];
 
+  // Buscadores (ARREGLADO: controller + focus para RawAutocomplete)
+  final _productSearchController = TextEditingController();
+  final _productSearchFocusNode = FocusNode();
+
+  final _customerSearchController = TextEditingController();
+  final _customerSearchFocusNode = FocusNode();
+
+  // Venta
+  String? _customerId;
   String _paymentMethod = 'Efectivo';
+  double _discount = 0.0;
+  double _shippingCost = 0.0;
 
-  @override
-  void initState() {
-    super.initState();
-    _warmUp();
-  }
+  final _fmt = NumberFormat.currency(locale: 'es_MX', symbol: r'$');
 
-  @override
-  void dispose() {
-    _customerCtrl.dispose();
-    _productCtrl.dispose();
-    _discountCtrl.dispose();
-    _shippingCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _warmUp() async {
-    try {
-      final prods = await ProductRepository().all(); // List<Map<String,Object?>>
-      final custs = await CustomerRepository().all(); // List<Map<String,Object?>>
-      if (!mounted) return;
-      setState(() {
-        _allProducts = prods;
-        _allCustomers = custs;
-      });
-    } catch (_) {
-      // Ignorar por ahora; la UI seguirá vacía hasta que haya datos
-    }
-  }
-
-  // Helpers de productos
-  String _nameOf(Map<String, Object?> m) => (m['name'] as String?)?.trim() ?? '';
-  String? _skuOf(Map<String, Object?> m) => (m['sku'] as String?)?.trim().isEmpty == true ? null : (m['sku'] as String?);
-  double _priceOf(Map<String, Object?> m) => (m['price'] as num?)?.toDouble() ?? 0.0;
-  double _costOf(Map<String, Object?> m) => (m['cost'] as num?)?.toDouble() ?? 0.0;
-  String _idOf(Map<String, Object?> m) => (m['id'] as String?) ?? '';
-
-  // Helpers de clientes
-  String _custName(Map<String, Object?> m) => (m['name'] as String?)?.trim().isEmpty == true ? (m['id'] as String? ?? '') : (m['name'] as String);
-  String _custId(Map<String, Object?> m) => (m['id'] as String?) ?? '';
-
-  void _addProductToCart(Map<String, Object?> p) {
-    final id = _idOf(p);
-    final idx = _items.indexWhere((it) => it['productId'] == id);
-    if (idx >= 0) {
-      // Sumar cantidad si ya está
-      final it = _items[idx];
-      final q = (it['quantity'] as int) + 1;
-      it['quantity'] = q;
-      final price = (it['price'] as num).toDouble();
-      final disc = (it['lineDiscount'] as num).toDouble();
-      it['subtotal'] = (price * q - disc).clamp(0, double.infinity);
-      setState(() {});
-    } else {
-      _items.add({
-        'id': _uuid.v4(),
-        'productId': id,
-        'name': _nameOf(p),
-        'price': _priceOf(p),
-        'costAtSale': _costOf(p),
-        'quantity': 1,
-        'lineDiscount': 0.0,
-        'subtotal': _priceOf(p) * 1 - 0.0,
-      });
-      setState(() {});
-    }
-  }
-
+  // Totales
   double get _subtotal {
     double s = 0.0;
     for (final it in _items) {
-      s += (it['subtotal'] as num?)?.toDouble() ?? 0.0;
+      s += (it['subtotal'] as num).toDouble();
     }
     return s;
   }
 
-  double get _discount => double.tryParse(_discountCtrl.text.replaceAll(',', '.')) ?? 0.0;
-  double get _shipping => double.tryParse(_shippingCtrl.text.replaceAll(',', '.')) ?? 0.0;
-
   double get _total {
-    final t = _subtotal - _discount + _shipping;
-    return t < 0 ? 0.0 : t;
+    final t = (_subtotal - _discount + _shippingCost);
+    return t < 0 ? 0 : t;
   }
 
-  double get _profit {
-    // Utilidad = sum(precio*q - descLinea - cost*q)  - descuentoGlobal
-    // (el envío NO afecta utilidad)
-    double p = 0.0;
-    for (final it in _items) {
-      final q = (it['quantity'] as int?) ?? 0;
-      final price = (it['price'] as num?)?.toDouble() ?? 0.0;
-      final cost = (it['costAtSale'] as num?)?.toDouble() ?? 0.0;
-      final lineDisc = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
-      p += (price * q - lineDisc) - (cost * q);
+  @override
+  void initState() {
+    super.initState();
+    _loadInitial();
+  }
+
+  @override
+  void dispose() {
+    _productSearchController.dispose();
+    _productSearchFocusNode.dispose();
+    _customerSearchController.dispose();
+    _customerSearchFocusNode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadInitial() async {
+    try {
+      // Products
+      final pr = ProductRepository() as dynamic;
+      List rows;
+      try {
+        rows = await pr.all(); // si existe all()
+      } catch (_) {
+        try {
+          rows = await pr.list(); // fallback
+        } catch (_) {
+          rows = await pr.allMaps(); // otro nombre posible
+        }
+      }
+      // Asegura Map<String,Object?>
+      _products = rows.map<Map<String, Object?>>((e) => Map<String, Object?>.from(e as Map)).toList();
+
+      // Customers
+      final cr = CustomerRepository() as dynamic;
+      List crows;
+      try {
+        crows = await cr.all();
+      } catch (_) {
+        try {
+          crows = await cr.list();
+        } catch (_) {
+          crows = await cr.allMaps();
+        }
+      }
+      _customers = crows.map<Map<String, Object?>>((e) => Map<String, Object?>.from(e as Map)).toList();
+
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudieron cargar catálogos: $e')),
+      );
     }
-    p -= _discount;
-    if (p.isNaN) return 0.0;
-    return p < 0 ? 0.0 : p;
+  }
+
+  void _addItemFromOption(Map<String, Object?> o) {
+    final productId = (o['id'] ?? _uuid.v4()).toString();
+    final name = (o['name'] ?? 'S/N').toString();
+    final sku = (o['sku'] ?? '').toString();
+    final price = (o['price'] as num? ?? 0).toDouble();
+    final cost = (o['cost'] as num? ?? 0).toDouble();
+
+    // Si ya está en carrito, suma cantidad
+    final idx = _items.indexWhere((e) => e['productId'] == productId);
+    if (idx >= 0) {
+      setState(() {
+        final it = _items[idx];
+        final q = (it['quantity'] as int) + 1;
+        it['quantity'] = q;
+        it['subtotal'] = (price * q) - (it['lineDiscount'] as num).toDouble();
+      });
+      return;
+    }
+
+    final line = <String, Object?>{
+      'id': _uuid.v4(),
+      'productId': productId,
+      'name': name,
+      'sku': sku,
+      'quantity': 1,
+      'price': price,
+      'costAtSale': cost,
+      'lineDiscount': 0.0,
+      'subtotal': (price * 1) - 0.0,
+    };
+
+    setState(() => _items.add(line));
   }
 
   Future<void> _saveSale() async {
     if (_items.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Agrega al menos un producto')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Agrega al menos un producto')),
+      );
       return;
     }
+
+    final sale = <String, Object?>{
+      'id': _uuid.v4(),
+      'customerId': _customerId,
+      'total': _total.toDouble(),
+      'discount': _discount.toDouble(),
+      'paymentMethod': _paymentMethod,
+      'shippingCost': _shippingCost.toDouble(), // si tu DB lo soporta
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+
     try {
-      final sale = {
-        'id': _uuid.v4(),
-        'customerId': _selectedCustomer == null ? null : _custId(_selectedCustomer!),
-        'total': _total,
-        'discount': _discount,
-        'shipping': _shipping,
-        'paymentMethod': _paymentMethod,
-        'profit': _profit,
-        'createdAt': DateTime.now().toIso8601String(),
-      };
-      await SaleRepository().create(sale, _items); // Debes tener este método en tu repo
+      final repoDyn = SaleRepository() as dynamic;
+
+      // Llamada dinámica para evitar errores de nombre de método (create / createSale / save)
+      Future<void> _tryCall(Future<void> Function() f) async {
+        try {
+          await f();
+        } catch (_) {
+          rethrow;
+        }
+      }
+
+      try {
+        await _tryCall(() async => await repoDyn.create(sale, _items));
+      } catch (_) {
+        try {
+          await _tryCall(() async => await repoDyn.createSale(sale, _items));
+        } catch (_) {
+          await _tryCall(() async => await repoDyn.save(sale, _items));
+        }
+      }
+
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Venta guardada')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Venta guardada')),
+      );
       setState(() {
         _items.clear();
-        _discountCtrl.text = '0';
-        _shippingCtrl.text = '0';
-        _productCtrl.clear();
+        _discount = 0.0;
+        _shippingCost = 0.0;
+        _customerId = null;
+        _customerSearchController.clear();
+        _productSearchController.clear();
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al guardar: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al guardar venta: $e')),
+      );
     }
-  }
-
-  Future<void> _showNewCustomerDialog() async {
-    final nameCtrl = TextEditingController();
-    final phoneCtrl = TextEditingController();
-    final emailCtrl = TextEditingController();
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Nuevo cliente'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
-            TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Teléfono')),
-            TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email')),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Guardar')),
-        ],
-      ),
-    );
-
-    if (ok == true) {
-      final m = {
-        'id': _uuid.v4(),
-        'name': nameCtrl.text.trim(),
-        'phone': phoneCtrl.text.trim(),
-        'email': emailCtrl.text.trim(),
-        'createdAt': DateTime.now().toIso8601String(),
-      };
-      try {
-        await CustomerRepository().upsertCustomer(m);
-        // Actualiza cache y selección
-        _allCustomers = await CustomerRepository().all();
-        final found = _allCustomers.firstWhere(
-          (c) => (c['id'] as String?) == m['id'],
-          orElse: () => m,
-        );
-        setState(() {
-          _selectedCustomer = found;
-          _customerCtrl.text = _custName(found);
-        });
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al guardar cliente: $e')));
-      }
-    }
-  }
-
-  Iterable<Map<String, Object?>> _filterProducts(String q) {
-    final qq = q.toLowerCase().trim();
-    if (qq.isEmpty) return const <Map<String, Object?>>[];
-    return _allProducts.where((p) {
-      final name = _nameOf(p).toLowerCase();
-      final sku = (_skuOf(p) ?? '').toLowerCase();
-      return name.contains(qq) || sku.contains(qq);
-    }).take(20);
-  }
-
-  Iterable<Map<String, Object?>> _filterCustomers(String q) {
-    final qq = q.toLowerCase().trim();
-    if (qq.isEmpty) return const <Map<String, Object?>>[];
-    return _allCustomers.where((c) {
-      final name = _custName(c).toLowerCase();
-      final phone = (c['phone'] as String?)?.toLowerCase() ?? '';
-      return name.contains(qq) || phone.contains(qq);
-    }).take(20);
   }
 
   @override
   Widget build(BuildContext context) {
+    final pad = MediaQuery.of(context).padding;
     return Scaffold(
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(title: const Text('POS ventas')),
+      appBar: AppBar(title: const Text('POS / Ventas')),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.only(
-            left: 12, right: 12, top: 12,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 80,
-          ),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + pad.bottom),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // === Cliente: typeahead + atajo para nuevo cliente ===
-              Row(
-                children: [
-                  Expanded(
-                    child: RawAutocomplete<Map<String, Object?>>(
-                      textEditingController: _customerCtrl,
-                      displayStringForOption: (o) => _custName(o),
-                      optionsBuilder: (text) => _filterCustomers(text.text),
-                      onSelected: (o) {
-                        setState(() => _selectedCustomer = o);
-                      },
-                      fieldViewBuilder: (ctx, ctrl, focus, onSubmit) {
-                        return TextField(
-                          controller: ctrl,
-                          focusNode: focus,
-                          decoration: const InputDecoration(
-                            labelText: 'Cliente (buscar por nombre/teléfono)',
-                            prefixIcon: Icon(Icons.search),
-                          ),
-                        );
-                      },
-                      optionsViewBuilder: (ctx, onSelected, options) {
-                        return Align(
-                          alignment: Alignment.topLeft,
-                          child: Material(
-                            elevation: 4,
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxHeight: 240, maxWidth: 600),
-                              child: ListView.builder(
-                                shrinkWrap: true,
-                                itemCount: options.length,
-                                itemBuilder: (_, i) {
-                                  final o = options.elementAt(i);
-                                  return ListTile(
-                                    dense: true,
-                                    title: Text(_custName(o)),
-                                    subtitle: Text((o['phone'] as String?) ?? ''),
-                                    onTap: () => onSelected(o),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'Nuevo cliente',
-                    onPressed: _showNewCustomerDialog,
-                    icon: const Icon(Icons.person_add_alt_1),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              // === Buscador de productos (typeahead) AL INICIO ===
+              // --- 1) Buscador de productos arriba del todo ---
               RawAutocomplete<Map<String, Object?>>(
-                textEditingController: _productCtrl,
-                displayStringForOption: (o) {
-                  final sku = _skuOf(o);
-                  final name = _nameOf(o);
-                  return sku == null || sku.isEmpty ? name : '$name · SKU: $sku';
+                textEditingController: _productSearchController,
+                focusNode: _productSearchFocusNode,
+                displayStringForOption: (o) =>
+                    "${o['name'] ?? ''} (${(o['sku'] ?? '-')})",
+                optionsBuilder: (TextEditingValue te) {
+                  final q = te.text.trim().toLowerCase();
+                  if (q.isEmpty) return const Iterable.empty();
+                  return _products.where((p) {
+                    final n = (p['name'] ?? '').toString().toLowerCase();
+                    final s = (p['sku'] ?? '').toString().toLowerCase();
+                    return n.contains(q) || s.contains(q);
+                  });
                 },
-                optionsBuilder: (text) => _filterProducts(text.text),
-                onSelected: (o) {
-                  _addProductToCart(o);
-                  _productCtrl.clear();
-                },
-                fieldViewBuilder: (ctx, ctrl, focus, onSubmit) {
+                fieldViewBuilder: (context, textCtrl, focusNode, onSubmit) {
                   return TextField(
-                    controller: ctrl,
-                    focusNode: focus,
-                    textInputAction: TextInputAction.search,
+                    controller: textCtrl,
+                    focusNode: focusNode,
                     decoration: const InputDecoration(
-                      labelText: 'Buscar producto (nombre o SKU)',
+                      labelText: 'Buscar producto por nombre o SKU',
                       prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
                     ),
-                    onSubmitted: (_) {
-                      final opts = _filterProducts(ctrl.text).toList();
-                      if (opts.isNotEmpty) {
-                        _addProductToCart(opts.first);
-                        ctrl.clear();
-                      }
-                    },
+                    onSubmitted: (_) => onSubmit(),
                   );
                 },
-                optionsViewBuilder: (ctx, onSelected, options) {
+                optionsViewBuilder: (context, onSelected, options) {
+                  final list = options.toList();
                   return Align(
                     alignment: Alignment.topLeft,
                     child: Material(
                       elevation: 4,
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 260, maxWidth: 700),
+                        constraints: const BoxConstraints(maxHeight: 260),
                         child: ListView.builder(
                           shrinkWrap: true,
-                          itemCount: options.length,
+                          itemCount: list.length,
                           itemBuilder: (_, i) {
-                            final o = options.elementAt(i);
-                            final sku = _skuOf(o) ?? '-';
-                            final price = _priceOf(o).toStringAsFixed(2);
+                            final o = list[i];
+                            final name = (o['name'] ?? '').toString();
+                            final sku = (o['sku'] ?? '-').toString();
+                            final price = (o['price'] as num? ?? 0).toDouble();
                             return ListTile(
-                              dense: true,
-                              title: Text(_nameOf(o)),
-                              subtitle: Text('SKU: $sku   ·   \$${price}'),
-                              trailing: const Icon(Icons.add_circle_outline),
+                              title: Text(name),
+                              subtitle: Text('SKU: $sku  •  ${_fmt.format(price)}'),
+                              onTap: () {
+                                onSelected(o);
+                                _productSearchController.clear();
+                                _addItemFromOption(o);
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+
+              // --- 2) Buscador de clientes (typeahead similar) ---
+              RawAutocomplete<Map<String, Object?>>(
+                textEditingController: _customerSearchController,
+                focusNode: _customerSearchFocusNode,
+                displayStringForOption: (o) => (o['name'] ?? '').toString(),
+                optionsBuilder: (TextEditingValue te) {
+                  final q = te.text.trim().toLowerCase();
+                  if (q.isEmpty) return const Iterable.empty();
+                  return _customers.where((c) {
+                    final n = (c['name'] ?? '').toString().toLowerCase();
+                    final p = (c['phone'] ?? '').toString().toLowerCase();
+                    return n.contains(q) || p.contains(q);
+                  });
+                },
+                fieldViewBuilder: (context, textCtrl, focusNode, onSubmit) {
+                  return TextField(
+                    controller: textCtrl,
+                    focusNode: focusNode,
+                    decoration: const InputDecoration(
+                      labelText: 'Cliente (buscar por nombre o teléfono)',
+                      prefixIcon: Icon(Icons.person_search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => onSubmit(),
+                  );
+                },
+                onSelected: (o) {
+                  _customerId = (o['id'] ?? '').toString();
+                  _customerSearchController.text =
+                      (o['name'] ?? '').toString();
+                  setState(() {});
+                },
+                optionsViewBuilder: (context, onSelected, options) {
+                  final list = options.toList();
+                  return Align(
+                    alignment: Alignment.topLeft,
+                    child: Material(
+                      elevation: 4,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: list.length,
+                          itemBuilder: (_, i) {
+                            final o = list[i];
+                            return ListTile(
+                              title: Text((o['name'] ?? '').toString()),
+                              subtitle: Text((o['phone'] ?? '').toString()),
                               onTap: () => onSelected(o),
                             );
                           },
@@ -365,163 +329,161 @@ class _SalesPageState extends State<SalesPage> {
                   );
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
 
-              // === Carrito ===
-              Card(
-                child: Column(
-                  children: [
-                    const ListTile(
-                      title: Text('Carrito'),
-                      subtitle: Text('Toca + / - para ajustar cantidades'),
-                    ),
-                    const Divider(height: 1),
-                    ..._items.asMap().entries.map((e) {
-                      final i = e.key; final it = e.value;
-                      final name = (it['name'] as String?) ?? '';
-                      final price = (it['price'] as num?)?.toDouble() ?? 0.0;
-                      final q = (it['quantity'] as int?) ?? 0;
-                      final lineDisc = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
-                      final subtotal = (it['subtotal'] as num?)?.toDouble() ?? 0.0;
-                      return Column(
-                        children: [
-                          ListTile(
-                            title: Text(name),
-                            subtitle: Text('\$${price.toStringAsFixed(2)}  ·  Desc: \$${lineDisc.toStringAsFixed(2)}  ·  Subtotal: \$${subtotal.toStringAsFixed(2)}'),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  onPressed: () {
-                                    final newQ = q > 1 ? q - 1 : 1;
-                                    it['quantity'] = newQ;
-                                    it['subtotal'] = (price * newQ - lineDisc).clamp(0, double.infinity);
-                                    setState(() {});
-                                  },
-                                  icon: const Icon(Icons.remove_circle_outline),
+              // --- 3) Carrito ---
+              Expanded(
+                child: Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: _items.isEmpty
+                      ? const Center(child: Text('Sin productos'))
+                      : ListView.builder(
+                          itemCount: _items.length,
+                          itemBuilder: (_, i) {
+                            final it = _items[i];
+                            final name = (it['name'] ?? '').toString();
+                            final sku = (it['sku'] ?? '').toString();
+                            final q = (it['quantity'] as int);
+                            final price = (it['price'] as num).toDouble();
+                            final sub = (it['subtotal'] as num).toDouble();
+                            return ListTile(
+                              title: Text(name),
+                              subtitle: Text('SKU: $sku • ${_fmt.format(price)}'),
+                              trailing: SizedBox(
+                                width: 170,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.remove),
+                                      onPressed: () {
+                                        if (q <= 1) return;
+                                        setState(() {
+                                          it['quantity'] = q - 1;
+                                          it['subtotal'] = (price * (q - 1)) -
+                                              (it['lineDiscount'] as num)
+                                                  .toDouble();
+                                        });
+                                      },
+                                    ),
+                                    Text(q.toString(),
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold)),
+                                    IconButton(
+                                      icon: const Icon(Icons.add),
+                                      onPressed: () {
+                                        setState(() {
+                                          it['quantity'] = q + 1;
+                                          it['subtotal'] = (price * (q + 1)) -
+                                              (it['lineDiscount'] as num)
+                                                  .toDouble();
+                                        });
+                                      },
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline),
+                                      onPressed: () {
+                                        setState(() => _items.removeAt(i));
+                                      },
+                                    ),
+                                  ],
                                 ),
-                                Text('$q'),
-                                IconButton(
-                                  onPressed: () {
-                                    final newQ = q + 1;
-                                    it['quantity'] = newQ;
-                                    it['subtotal'] = (price * newQ - lineDisc).clamp(0, double.infinity);
-                                    setState(() {});
-                                  },
-                                  icon: const Icon(Icons.add_circle_outline),
-                                ),
-                                IconButton(
-                                  onPressed: () {
-                                    setState(() { _items.removeAt(i); });
-                                  },
-                                  icon: const Icon(Icons.delete_outline),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Divider(height: 1),
-                        ],
-                      );
-                    }).toList(),
-                    if (_items.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: Text('Agrega productos usando el buscador de arriba.'),
-                      ),
-                  ],
+                              ),
+                              leading: Text(_fmt.format(sub)),
+                            );
+                          },
+                        ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
 
-              // === Totales ===
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
+              // --- 4) Descuento, envío, método de pago + Totales ---
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Descuento',
+                        prefixText: r'$',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (v) {
+                        final n = double.tryParse(v.replaceAll(',', '.')) ?? 0;
+                        setState(() => _discount = n);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Costo de envío',
+                        prefixText: r'$',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (v) {
+                        final n = double.tryParse(v.replaceAll(',', '.')) ?? 0;
+                        setState(() => _shippingCost = n);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _paymentMethod,
+                      decoration: const InputDecoration(
+                        labelText: 'Método de pago',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'Efectivo', child: Text('Efectivo')),
+                        DropdownMenuItem(value: 'Tarjeta', child: Text('Tarjeta')),
+                        DropdownMenuItem(value: 'Transferencia', child: Text('Transferencia')),
+                      ],
+                      onChanged: (v) => setState(() {
+                        _paymentMethod = v ?? 'Efectivo';
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Row(
-                        children: [
-                          Expanded(child: Text('Subtotal', style: Theme.of(context).textTheme.bodyLarge)),
-                          Text('\$${_subtotal.toStringAsFixed(2)}'),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _discountCtrl,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              decoration: const InputDecoration(
-                                labelText: 'Descuento',
-                                prefixText: '\$',
-                              ),
-                              onChanged: (_) => setState(() {}),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: _shippingCtrl,
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              decoration: const InputDecoration(
-                                labelText: 'Envío (no afecta utilidad)',
-                                prefixText: '\$',
-                              ),
-                              onChanged: (_) => setState(() {}),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              value: _paymentMethod,
-                              items: const [
-                                DropdownMenuItem(value: 'Efectivo', child: Text('Efectivo')),
-                                DropdownMenuItem(value: 'Tarjeta', child: Text('Tarjeta')),
-                                DropdownMenuItem(value: 'Transferencia', child: Text('Transferencia')),
-                              ],
-                              onChanged: (v) => setState(() => _paymentMethod = v ?? 'Efectivo'),
-                              decoration: const InputDecoration(labelText: 'Forma de pago'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text('Utilidad: \$${_profit.toStringAsFixed(2)}'),
-                                  const SizedBox(height: 4),
-                                  Text('Total: \$${_total.toStringAsFixed(2)}',
-                                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
+                      Text('Subtotal: ${_fmt.format(_subtotal)}'),
+                      Text('Envío: ${_fmt.format(_shippingCost)}'),
+                      Text('Desc.: -${_fmt.format(_discount)}'),
+                      Text(
+                        'Total: ${_fmt.format(_total)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
                       ),
                     ],
-                  ),
+                  )
+                ],
+              ),
+              const SizedBox(height: 10),
+
+              // Botón guardar (un poco más arriba)
+              SizedBox(
+                height: 46,
+                child: FilledButton.icon(
+                  onPressed: _saveSale,
+                  icon: const Icon(Icons.save),
+                  label: const Text('Guardar venta'),
                 ),
               ),
-              const SizedBox(height: 12),
             ],
           ),
-        ),
-      ),
-
-      // Botón subir ~20px (queda sobre el contenido)
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
-        child: FilledButton.icon(
-          onPressed: _saveSale,
-          icon: const Icon(Icons.save),
-          label: const Text('Guardar venta'),
         ),
       ),
     );

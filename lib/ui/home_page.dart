@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-// Usa imports relativos para evitar conflictos con el nombre del paquete.
+// Imports relativos para evitar conflictos.
 import 'sales_page.dart';
 import 'products_page.dart';
 import 'customers_page.dart';
@@ -32,12 +32,13 @@ class HomePage extends StatelessWidget {
           crossAxisCount: 2, mainAxisSpacing: 16, crossAxisSpacing: 16, childAspectRatio: 1.2,
         ),
         itemCount: tiles.length,
-        itemBuilder: (_, i) {
+        itemBuilder: (ctx, i) {
           final it = tiles[i];
           return Card(
             child: InkWell(
               onTap: () => Navigator.push(
-                _, MaterialPageRoute(builder: (_) => it.builder()),
+                ctx, // <-- usar el BuildContext correcto
+                MaterialPageRoute(builder: (_) => it.builder()),
               ),
               child: Center(
                 child: Column(

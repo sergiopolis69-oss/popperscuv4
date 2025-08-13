@@ -1,15 +1,15 @@
 // lib/repositories/sale_repository.dart
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+
 import '../services/db.dart';
 
 class SaleRepository {
   final _uuid = const Uuid();
-
   Future<Database> _db() => AppDatabase().database;
 
-  /// Crea una venta con sus items. `sale` e `items` son Maps (POS ya los arma).
-  /// - shipping se suma al total pero **no** afecta la utilidad.
+  /// Crea una venta y sus renglones.
+  /// - `shipping` se suma al total pero **no** afecta la utilidad.
   Future<void> create(
     Map<String, Object?> sale,
     List<Map<String, Object?>> items,
@@ -18,7 +18,7 @@ class SaleRepository {
     await db.transaction((txn) async {
       final saleId = (sale['id'] as String?) ?? _uuid.v4();
 
-      // Recalcular utilidad si no viene (o viene 0)
+      // Calcular utilidad si no viene.
       double profit = (sale['profit'] as num?)?.toDouble() ?? 0.0;
       if (profit <= 0) {
         for (final it in items) {
@@ -31,9 +31,8 @@ class SaleRepository {
         }
       }
 
-      // Total = suma subtotales + shipping (si POS no lo calculó)
-      final shipping = (sale['shipping'] as num?)?.toDouble() ?? 0.0;
-      final totalFromItems = items.fold<double>(0.0, (acc, it) {
+      // Subtotal por items (sin envío)
+      final subtotalItems = items.fold<double>(0.0, (acc, it) {
         final qty = (it['quantity'] as num?)?.toInt() ?? 0;
         final price = (it['price'] as num?)?.toDouble() ?? 0.0;
         final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
@@ -41,23 +40,29 @@ class SaleRepository {
         return acc + (sub < 0 ? 0 : sub);
       });
 
-      final total = (sale['total'] as num?)?.toDouble() ?? (totalFromItems + shipping);
+      final shipping = (sale['shipping'] as num?)?.toDouble() ?? 0.0;
+      final discount = (sale['discount'] as num?)?.toDouble() ?? 0.0;
 
-      // Inserta venta
+      // Si POS ya mandó total lo respetamos; si no, lo calculamos.
+      final total = (sale['total'] as num?)?.toDouble() ??
+          ((subtotalItems - discount) + shipping);
+
+      // Insert venta
       await txn.insert('sales', {
         'id': saleId,
         'customerId': sale['customerId'],
         'total': total,
-        'discount': (sale['discount'] as num?)?.toDouble() ?? 0.0,
+        'discount': discount,
         'shipping': shipping,
-        'profit': profit, // OJO: ya excluye envío
+        'profit': profit, // excluye envío
         'paymentMethod': (sale['paymentMethod'] as String?) ?? 'Efectivo',
-        'createdAt': (sale['createdAt'] as String?) ?? DateTime.now().toIso8601String(),
+        'createdAt':
+            (sale['createdAt'] as String?) ?? DateTime.now().toIso8601String(),
       });
 
-      // Inserta items, descuenta stock y registra movimiento
+      // Insert items + actualizar stock + movimiento
       for (final it in items) {
-        final itId = (it['id'] as String?) ?? _uuid.v4();
+        final itemId = (it['id'] as String?) ?? _uuid.v4();
         final productId = (it['productId'] as String?) ?? '';
         final qty = (it['quantity'] as num?)?.toInt() ?? 0;
         final price = (it['price'] as num?)?.toDouble() ?? 0.0;
@@ -70,7 +75,7 @@ class SaleRepository {
         }
 
         await txn.insert('sale_items', {
-          'id': itId,
+          'id': itemId,
           'saleId': saleId,
           'productId': productId,
           'quantity': qty,
@@ -97,15 +102,17 @@ class SaleRepository {
     });
   }
 
-  /// Historial de ventas (opcional por cliente) en un rango.
+  /// Historial de ventas (opcional filtrado por cliente).
   Future<List<Map<String, Object?>>> history({
     String? customerId,
     required DateTime from,
     required DateTime to,
   }) async {
     final db = await _db();
-    final fromIso = DateTime(from.year, from.month, from.day).toIso8601String();
-    final toIso = DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
+    final fromIso =
+        DateTime(from.year, from.month, from.day).toIso8601String();
+    final toIso =
+        DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
 
     final args = <Object?>[fromIso, toIso];
     final where = StringBuffer('s.createdAt BETWEEN ? AND ?');
@@ -124,11 +131,14 @@ class SaleRepository {
     ''', args);
   }
 
-  /// Top clientes por rango (para TopCustomersPage).
-  Future<List<Map<String, Object?>>> topCustomers(DateTime from, DateTime to) async {
+  /// Top clientes por rango.
+  Future<List<Map<String, Object?>>> topCustomers(
+      DateTime from, DateTime to) async {
     final db = await _db();
-    final fromIso = DateTime(from.year, from.month, from.day).toIso8601String();
-    final toIso = DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
+    final fromIso =
+        DateTime(from.year, from.month, from.day).toIso8601String();
+    final toIso =
+        DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
 
     return db.rawQuery('''
       SELECT s.customerId,
@@ -144,11 +154,13 @@ class SaleRepository {
     ''', [fromIso, toIso]);
   }
 
-  /// Resumen (ventas, utilidad, etc.) para el módulo de utilidad.
+  /// Resumen de utilidad/ventas para día, semana, mes, año.
   Future<Map<String, double>> summary(DateTime from, DateTime to) async {
     final db = await _db();
-    final fromIso = DateTime(from.year, from.month, from.day).toIso8601String();
-    final toIso = DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
+    final fromIso =
+        DateTime(from.year, from.month, from.day).toIso8601String();
+    final toIso =
+        DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
 
     final rows = await db.rawQuery('''
       SELECT COALESCE(SUM(total),0)    AS total,
@@ -168,108 +180,7 @@ class SaleRepository {
       'profit': d('profit'),
       'discount': d('discount'),
       'shipping': d('shipping'),
-      // orders como double para graficar fácil; convierte a int si lo necesitas
       'orders': (m['orders'] as num?)?.toDouble() ?? 0.0,
     };
-  }
-}
-      final shipping = (sale['shippingCost'] as num?)?.toDouble() ?? 0.0;
-      double total = (sale['total'] as num?)?.toDouble() ?? (subtotal - discount + shipping);
-      if (total < 0) total = 0;
-
-      await txn.insert('sales', {
-        'id': saleId,
-        'customer_id': sale['customerId'],
-        'total': total,
-        'discount': discount,
-        'shipping_cost': shipping, // no afecta utilidad
-        'profit': profit,
-        'payment_method': sale['paymentMethod']?.toString() ?? 'Efectivo',
-        'created_at': (sale['createdAt'] ?? DateTime.now()).toString(),
-      });
-
-      for (final it in items) {
-        final itemId = it['id']?.toString() ?? _uuid.v4();
-        final qty = (it['quantity'] as num).toInt();
-        final price = (it['price'] as num).toDouble();
-        final cost = (it['costAtSale'] as num?)?.toDouble() ?? 0.0;
-        final lineDisc = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
-        final lineSubtotal = (price * qty) - lineDisc;
-
-        await txn.insert('sale_items', {
-          'id': itemId,
-          'sale_id': saleId,
-          'product_id': it['productId'],
-          'quantity': qty,
-          'price': price,
-          'cost_at_sale': cost,
-          'line_discount': lineDisc,
-          'subtotal': lineSubtotal < 0 ? 0.0 : lineSubtotal,
-        });
-
-        // stock
-        await txn.rawUpdate(
-          'UPDATE products SET stock = stock - ? WHERE id = ?',
-          [qty, it['productId']],
-        );
-
-        // movimiento de inventario (opcional)
-        await txn.insert('inventory_movements', {
-          'id': _uuid.v4(),
-          'product_id': it['productId'],
-          'delta': -qty,
-          'note': 'Venta $saleId',
-          'created_at': DateTime.now().toString(),
-        });
-      }
-
-      return saleId;
-    });
-  }
-
-  // --- Si ya usabas estos, déjalos; si no, puedes agregarlos:
-
-  /// Resumen entre fechas: total y utilidad agregada.
-  Future<Map<String, double>> summary(DateTime from, DateTime to) async {
-    final db = await AppDatabase().database;
-    final rows = await db.rawQuery(
-      'SELECT SUM(total) AS t, SUM(profit) AS p FROM sales WHERE datetime(created_at) BETWEEN ? AND ?',
-      [from.toIso8601String(), to.toIso8601String()],
-    );
-    final m = rows.isNotEmpty ? rows.first : <String, Object?>{};
-    return {
-      'total': (m['t'] as num?)?.toDouble() ?? 0.0,
-      'profit': (m['p'] as num?)?.toDouble() ?? 0.0,
-    };
-  }
-
-  /// Historial de ventas (opcional, si lo usas en reportes)
-  Future<List<Map<String, Object?>>> history({
-    String? customerId,
-    DateTime? from,
-    DateTime? to,
-  }) async {
-    final db = await AppDatabase().database;
-    final where = <String>[];
-    final args = <Object?>[];
-    if (customerId != null) {
-      where.add('customer_id = ?');
-      args.add(customerId);
-    }
-    if (from != null) {
-      where.add('datetime(created_at) >= ?');
-      args.add(from.toIso8601String());
-    }
-    if (to != null) {
-      where.add('datetime(created_at) <= ?');
-      args.add(to.toIso8601String());
-    }
-    final rows = await db.query(
-      'sales',
-      where: where.isEmpty ? null : where.join(' AND '),
-      whereArgs: args.isEmpty ? null : args,
-      orderBy: 'datetime(created_at) DESC',
-    );
-    return rows;
   }
 }

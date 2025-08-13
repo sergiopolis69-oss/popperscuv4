@@ -40,7 +40,7 @@ class CsvIO {
     return file.path;
   }
 
-  /// Importa productos desde CSV. Encabezados esperados: name,sku,cost,price,stock,category
+  /// Importa productos NUEVOS desde CSV. Encabezados esperados: name,sku,cost,price,stock,category
   static Future<int> importProductsFromCsv() async {
     final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (picked == null || picked.files.isEmpty) return 0;
@@ -88,8 +88,10 @@ class CsvIO {
     return inserted;
   }
 
-  /// Importa clientes desde CSV. Encabezados esperados: name,phone,email
-  static Future<int> importCustomersFromCsv() async {
+  /// IMPORT MASIVO tipo UPSERT por SKU o ID. Si existe, actualiza; si no, inserta.
+  /// Encabezados soportados: id, sku, name, cost, price, stock, category
+  /// - Si incluye 'stock', se establece el stock a ese valor (no suma).
+  static Future<int> importProductsUpsertFromCsv() async {
     final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (picked == null || picked.files.isEmpty) return 0;
 
@@ -100,29 +102,180 @@ class CsvIO {
 
     final headers = csv.first.map((e) => e.toString().trim().toLowerCase()).toList();
     int idx(String k) => headers.indexOf(k);
+    final iId = idx('id');
+    final iSku = idx('sku');
     final iName = idx('name');
-    final iPhone = idx('phone');
-    final iEmail = idx('email');
+    final iCost = idx('cost');
+    final iPrice = idx('price');
+    final iStock = idx('stock');
+    final iCategory = idx('category');
 
     final db = await AppDatabase().database;
-    int inserted = 0;
+    int affected = 0;
     for (int r = 1; r < csv.length; r++) {
       final row = csv[r];
       if (row.isEmpty) continue;
-      final name = (iName >= 0) ? row[iName].toString() : null;
-      if (name == null || name.trim().isEmpty) continue;
-      final phone = (iPhone >= 0) ? row[iPhone]?.toString() : null;
-      final email = (iEmail >= 0) ? row[iEmail]?.toString() : null;
 
-      await db.insert('customers', {
-        'id': DateTime.now().microsecondsSinceEpoch.toString() + '_$r',
-        'name': name.trim(),
-        'phone': (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
-        'email': (email == null || email.trim().isEmpty) ? null : email.trim(),
-        'created_at': DateTime.now().toIso8601String(),
-      });
-      inserted++;
+      final id = (iId >= 0) ? row[iId]?.toString().trim() : null;
+      final sku = (iSku >= 0) ? row[iSku]?.toString().trim() : null;
+      final name = (iName >= 0) ? row[iName]?.toString().trim() : null;
+      final cost = (iCost >= 0) ? double.tryParse(row[iCost].toString()) : null;
+      final price = (iPrice >= 0) ? double.tryParse(row[iPrice].toString()) : null;
+      final stock = (iStock >= 0) ? int.tryParse(row[iStock].toString()) : null;
+      final category = (iCategory >= 0) ? row[iCategory]?.toString().trim() : null;
+
+      // Buscar producto existente
+      Map<String, Object?>? existing;
+      if ((id != null && id.isNotEmpty)) {
+        final q = await db.query('products', where: 'id = ?', whereArgs: [id], limit: 1);
+        if (q.isNotEmpty) existing = q.first;
+      }
+      if (existing == null && (sku != null && sku.isNotEmpty)) {
+        final q = await db.query('products', where: 'sku = ?', whereArgs: [sku], limit: 1);
+        if (q.isNotEmpty) existing = q.first;
+      }
+
+      if (existing != null) {
+        // UPDATE
+        final update = <String, Object?>{};
+        if (name != null && name.isNotEmpty) update['name'] = name;
+        if (sku != null && sku.isNotEmpty) update['sku'] = sku;
+        if (category != null && category.isNotEmpty) update['category'] = category;
+        if (cost != null) update['cost'] = cost;
+        if (price != null) update['price'] = price;
+        if (stock != null) update['stock'] = stock;
+        update['updated_at'] = DateTime.now().toIso8601String();
+        await db.update('products', update, where: 'id = ?', whereArgs: [existing['id']]);
+        affected++;
+      } else {
+        // INSERT (requiere como mínimo name)
+        if (name == null || name.isEmpty) continue;
+        await db.insert('products', {
+          'id': DateTime.now().microsecondsSinceEpoch.toString() + '_$r',
+          'name': name,
+          'sku': (sku == null || sku.isEmpty) ? null : sku,
+          'category': (category == null || category.isEmpty) ? null : category,
+          'cost': cost ?? 0,
+          'price': price ?? 0,
+          'stock': stock ?? 0,
+          'created_at': DateTime.now().toIso8601String(),
+          'updated_at': null,
+        });
+        affected++;
+      }
     }
-    return inserted;
+    return affected;
+  }
+
+  /// AGREGA AL INVENTARIO por CSV (suma al stock). Soporta SKU o ID.
+  /// Encabezados mínimos: sku|id, quantity
+  /// Opcionales: cost, price, name, category
+  /// - Si el producto existe: stock += quantity; actualiza cost/price si vienen.
+  /// - Si NO existe y hay 'name': crea el producto con ese stock inicial.
+  /// Devuelve el número de filas afectadas (sumas + inserciones).
+  static Future<int> importInventoryAddsFromCsv() async {
+    final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
+    if (picked == null || picked.files.isEmpty) return 0;
+
+    final bytes = picked.files.single.bytes ?? await File(picked.files.single.path!).readAsBytes();
+    final content = utf8.decode(bytes);
+    final List<List<dynamic>> csv = const CsvToListConverter(eol: '\n', shouldParseNumbers: false).convert(content);
+    if (csv.isEmpty) return 0;
+
+    final headers = csv.first.map((e) => e.toString().trim().toLowerCase()).toList();
+    int idx(String k) => headers.indexOf(k);
+    final iId = idx('id');
+    final iSku = idx('sku');
+    final iQty = idx('quantity');
+    final iName = idx('name');
+    final iCost = idx('cost');
+    final iPrice = idx('price');
+    final iCategory = idx('category');
+
+    if (iQty < 0 || (iId < 0 && iSku < 0)) {
+      // Formato mínimo no cumple
+      return 0;
+    }
+
+    final db = await AppDatabase().database;
+    int affected = 0;
+
+    await db.transaction((txn) async {
+      for (int r = 1; r < csv.length; r++) {
+        final row = csv[r];
+        if (row.isEmpty) continue;
+
+        final id = (iId >= 0) ? row[iId]?.toString().trim() : null;
+        final sku = (iSku >= 0) ? row[iSku]?.toString().trim() : null;
+        final qty = int.tryParse(row[iQty].toString()) ?? 0;
+        if (qty == 0) continue;
+
+        final name = (iName >= 0) ? row[iName]?.toString().trim() : null;
+        final cost = (iCost >= 0) ? double.tryParse(row[iCost].toString()) : null;
+        final price = (iPrice >= 0) ? double.tryParse(row[iPrice].toString()) : null;
+        final category = (iCategory >= 0) ? row[iCategory]?.toString().trim() : null;
+
+        // Buscar producto
+        Map<String, Object?>? existing;
+        if (id != null && id.isNotEmpty) {
+          final q = await txn.query('products', where: 'id = ?', whereArgs: [id], limit: 1);
+          if (q.isNotEmpty) existing = q.first;
+        }
+        if (existing == null && sku != null && sku.isNotEmpty) {
+          final q = await txn.query('products', where: 'sku = ?', whereArgs: [sku], limit: 1);
+          if (q.isNotEmpty) existing = q.first;
+        }
+
+        if (existing != null) {
+          final newStock = (existing['stock'] as int) + qty;
+          final update = <String, Object?>{
+            'stock': newStock,
+            'updated_at': DateTime.now().toIso8601String(),
+          };
+          if (cost != null) update['cost'] = cost;
+          if (price != null) update['price'] = price;
+          if (category != null && category.isNotEmpty) update['category'] = category;
+
+          await txn.update('products', update, where: 'id = ?', whereArgs: [existing['id']]);
+
+          await txn.insert('inventory_movements', {
+            'id': DateTime.now().microsecondsSinceEpoch.toString() + '_$r',
+            'product_id': existing['id'],
+            'delta': qty,
+            'reason': 'csv_import_add',
+            'created_at': DateTime.now().toIso8601String(),
+          });
+          affected++;
+        } else if (name != null && name.isNotEmpty) {
+          // Crear producto nuevo
+          final newId = DateTime.now().microsecondsSinceEpoch.toString() + '_$r';
+          await txn.insert('products', {
+            'id': newId,
+            'name': name,
+            'sku': (sku == null || sku.isEmpty) ? null : sku,
+            'category': (category == null || category.isEmpty) ? null : category,
+            'cost': cost ?? 0,
+            'price': price ?? 0,
+            'stock': qty,
+            'created_at': DateTime.now().toIso8601String(),
+            'updated_at': null,
+          });
+
+          await txn.insert('inventory_movements', {
+            'id': DateTime.now().microsecondsSinceEpoch.toString() + '_$r',
+            'product_id': newId,
+            'delta': qty,
+            'reason': 'csv_import_add_new',
+            'created_at': DateTime.now().toIso8601String(),
+          });
+          affected++;
+        } else {
+          // No se pudo resolver producto y no hay nombre -> se omite
+          continue;
+        }
+      }
+    });
+
+    return affected;
   }
 }

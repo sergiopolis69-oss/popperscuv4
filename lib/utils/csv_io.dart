@@ -8,28 +8,19 @@ import 'package:sqflite/sqflite.dart';
 import '../services/db.dart';
 
 class CsvIO {
-  /// Exporta una tabla a CSV en la carpeta de Documentos de la app.
-  /// Retorna la ruta completa del archivo.
   static Future<String> exportTable(String table) async {
     final db = await AppDatabase().database;
     final rows = await db.query(table);
-
-    // Encabezados
     final List<String> headers = rows.isEmpty ? <String>[] : rows.first.keys.toList();
-
-    // Construimos data: List<List<dynamic>>
     final List<List<dynamic>> data = <List<dynamic>>[];
     data.add(List<dynamic>.from(headers));
     for (final m in rows) {
       final List<dynamic> row = headers.map<dynamic>((h) => m[h]).toList();
       data.add(row);
     }
-
     final csv = const ListToCsvConverter().convert(data);
     return await _saveCsvToDocuments(csv, 'export_${table}.csv');
   }
-
-  // Compat wrappers para no tocar UI existente
   static Future<String> exportTableToDownloads(String table) => exportTable(table);
   static Future<String> exportTableLocal(String table) => exportTable(table);
 
@@ -40,11 +31,9 @@ class CsvIO {
     return file.path;
   }
 
-  /// Importa productos NUEVOS desde CSV. Encabezados esperados: name,sku,cost,price,stock,category
   static Future<int> importProductsFromCsv() async {
     final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (picked == null || picked.files.isEmpty) return 0;
-
     final bytes = picked.files.single.bytes ?? await File(picked.files.single.path!).readAsBytes();
     final content = utf8.decode(bytes);
     final List<List<dynamic>> csv = const CsvToListConverter(eol: '\n', shouldParseNumbers: false).convert(content);
@@ -88,13 +77,9 @@ class CsvIO {
     return inserted;
   }
 
-  /// IMPORT MASIVO tipo UPSERT por SKU o ID. Si existe, actualiza; si no, inserta.
-  /// Encabezados soportados: id, sku, name, cost, price, stock, category
-  /// - Si incluye 'stock', se establece el stock a ese valor (no suma).
   static Future<int> importProductsUpsertFromCsv() async {
     final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (picked == null || picked.files.isEmpty) return 0;
-
     final bytes = picked.files.single.bytes ?? await File(picked.files.single.path!).readAsBytes();
     final content = utf8.decode(bytes);
     final List<List<dynamic>> csv = const CsvToListConverter(eol: '\n', shouldParseNumbers: false).convert(content);
@@ -124,7 +109,6 @@ class CsvIO {
       final stock = (iStock >= 0) ? int.tryParse(row[iStock].toString()) : null;
       final category = (iCategory >= 0) ? row[iCategory]?.toString().trim() : null;
 
-      // Buscar producto existente
       Map<String, Object?>? existing;
       if ((id != null && id.isNotEmpty)) {
         final q = await db.query('products', where: 'id = ?', whereArgs: [id], limit: 1);
@@ -136,7 +120,6 @@ class CsvIO {
       }
 
       if (existing != null) {
-        // UPDATE
         final update = <String, Object?>{};
         if (name != null && name.isNotEmpty) update['name'] = name;
         if (sku != null && sku.isNotEmpty) update['sku'] = sku;
@@ -148,7 +131,6 @@ class CsvIO {
         await db.update('products', update, where: 'id = ?', whereArgs: [existing['id']]);
         affected++;
       } else {
-        // INSERT (requiere como mínimo name)
         if (name == null || name.isEmpty) continue;
         await db.insert('products', {
           'id': DateTime.now().microsecondsSinceEpoch.toString() + '_$r',
@@ -167,16 +149,9 @@ class CsvIO {
     return affected;
   }
 
-  /// AGREGA AL INVENTARIO por CSV (suma al stock). Soporta SKU o ID.
-  /// Encabezados mínimos: sku|id, quantity
-  /// Opcionales: cost, price, name, category
-  /// - Si el producto existe: stock += quantity; actualiza cost/price si vienen.
-  /// - Si NO existe y hay 'name': crea el producto con ese stock inicial.
-  /// Devuelve el número de filas afectadas (sumas + inserciones).
   static Future<int> importInventoryAddsFromCsv() async {
     final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (picked == null || picked.files.isEmpty) return 0;
-
     final bytes = picked.files.single.bytes ?? await File(picked.files.single.path!).readAsBytes();
     final content = utf8.decode(bytes);
     final List<List<dynamic>> csv = const CsvToListConverter(eol: '\n', shouldParseNumbers: false).convert(content);
@@ -193,7 +168,6 @@ class CsvIO {
     final iCategory = idx('category');
 
     if (iQty < 0 || (iId < 0 && iSku < 0)) {
-      // Formato mínimo no cumple
       return 0;
     }
 
@@ -215,7 +189,6 @@ class CsvIO {
         final price = (iPrice >= 0) ? double.tryParse(row[iPrice].toString()) : null;
         final category = (iCategory >= 0) ? row[iCategory]?.toString().trim() : null;
 
-        // Buscar producto
         Map<String, Object?>? existing;
         if (id != null && id.isNotEmpty) {
           final q = await txn.query('products', where: 'id = ?', whereArgs: [id], limit: 1);
@@ -247,7 +220,6 @@ class CsvIO {
           });
           affected++;
         } else if (name != null && name.isNotEmpty) {
-          // Crear producto nuevo
           final newId = DateTime.now().microsecondsSinceEpoch.toString() + '_$r';
           await txn.insert('products', {
             'id': newId,
@@ -270,7 +242,6 @@ class CsvIO {
           });
           affected++;
         } else {
-          // No se pudo resolver producto y no hay nombre -> se omite
           continue;
         }
       }

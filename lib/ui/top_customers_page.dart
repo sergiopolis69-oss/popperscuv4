@@ -48,9 +48,7 @@ class _TopCustomersPageState extends State<TopCustomersPage> {
     try {
       return await SaleRepository().topCustomers(r.start, r.end);
     } catch (_) {
-      // Si tu repo usa firma con named params:
       try {
-        // ignore: prefer_interpolation_to_compose_strings
         return await (SaleRepository() as dynamic).topCustomers(from: r.start, to: r.end);
       } catch (_) {
         return <Map<String, Object?>>[];
@@ -135,8 +133,8 @@ class _TopCustomersPageState extends State<TopCustomersPage> {
                       final pct = total == 0 ? 0 : (profit / total * 100);
                       return ListTile(
                         title: Text(name),
-                        subtitle: Text('Órdenes: ' + orders.toString() + ' · Utilidad: \$' + profit.toStringAsFixed(2) + ' · ' + pct.toStringAsFixed(1) + '%'),
-                        trailing: Text('\$' + total.toStringAsFixed(2), style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text('Órdenes: ' + orders.toString() + ' · Utilidad: \\$' + profit.toStringAsFixed(2) + ' · ' + pct.toStringAsFixed(1) + '%'),
+                        trailing: Text('\\$' + total.toStringAsFixed(2), style: const TextStyle(fontWeight: FontWeight.bold)),
                         onTap: () async {
                           final r = _rangeFor(_period, _anchor);
                           showModalBottomSheet(
@@ -205,9 +203,9 @@ class _CustomerHistorySheet extends StatelessWidget {
                     try { createdAt = DateTime.tryParse(createdAtStr); } catch (_) {}
                     final when = createdAt == null ? '-' : fmt.format(createdAt);
                     return ListTile(
-                      title: Text('\$' + total.toStringAsFixed(2)),
+                      title: Text('\\$' + total.toStringAsFixed(2)),
                       subtitle: Text(when),
-                      trailing: Text('Utilidad \$' + profit.toStringAsFixed(2)),
+                      trailing: Text('Utilidad \\$' + profit.toStringAsFixed(2)),
                     );
                   },
                 ),

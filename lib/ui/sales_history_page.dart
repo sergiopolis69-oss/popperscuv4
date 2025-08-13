@@ -25,7 +25,6 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
     try {
       return await SaleRepository().history(customerId: _customerId, from: _from, to: _to);
     } catch (_) {
-      // Si tu repo usa otra firma, adapta aquí.
       return <Map<String, Object?>>[];
     }
   }
@@ -143,8 +142,8 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text('\$' + total.toStringAsFixed(2), style: const TextStyle(fontWeight: FontWeight.bold)),
-                            Text('Utilidad \$' + profit.toStringAsFixed(2)),
+                            Text('\\$' + total.toStringAsFixed(2), style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text('Utilidad \\$' + profit.toStringAsFixed(2)),
                           ],
                         ),
                       );

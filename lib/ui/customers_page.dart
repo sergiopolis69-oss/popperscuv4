@@ -1,108 +1,205 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
-import '../models/customer.dart';
-import '../repositories/customer_repository.dart';
-import '../providers/providers.dart';
+import 'package:intl/intl.dart';
+import '../repositories/sale_repository.dart';
 
-class CustomersPage extends ConsumerStatefulWidget {
-  const CustomersPage({super.key});
+class TopCustomersPage extends StatefulWidget {
+  const TopCustomersPage({super.key});
 
   @override
-  ConsumerState<CustomersPage> createState() => _CustomersPageState();
+  State<TopCustomersPage> createState() => _TopCustomersPageState();
 }
 
-class _CustomersPageState extends ConsumerState<CustomersPage> {
+class _TopCustomersPageState extends State<TopCustomersPage> {
+  DateTime _anchor = DateTime.now();
+  String _period = 'Mes'; // Día, Semana, Mes, Año
+  final _fmtDate = DateFormat('yyyy-MM-dd');
+  final _fmtDT = DateFormat('yyyy-MM-dd HH:mm');
+
+  (DateTime, DateTime) _range() {
+    final a = DateTime(_anchor.year, _anchor.month, _anchor.day);
+    switch (_period) {
+      case 'Día':
+        return (a, a.add(const Duration(days: 1)));
+      case 'Semana':
+        final w0 = a.subtract(Duration(days: a.weekday - 1));
+        final w1 = w0.add(const Duration(days: 7));
+        return (w0, w1);
+      case 'Año':
+        final y0 = DateTime(a.year, 1, 1);
+        final y1 = DateTime(a.year + 1, 1, 1);
+        return (y0, y1);
+      case 'Mes':
+      default:
+        final m0 = DateTime(a.year, a.month, 1);
+        final m1 = DateTime(a.year, a.month + 1, 1);
+        return (m0, m1);
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _anchor,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (d != null) setState(() => _anchor = d);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final async = ref.watch(customersProvider);
+    final (from, to) = _range();
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Clientes'),
-        leading: Padding(
-          padding: const EdgeInsets.all(8),
-          child: CircleAvatar(backgroundImage: AssetImage('assets/logo.png')),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _openForm(),
-        child: const Icon(Icons.add),
-      ),
-      body: async.when(
-        data: (items) => ListView.builder(
-          itemCount: items.length,
-          itemBuilder: (c, i) {
-            final p = items[i];
-            return ListTile(
-              title: Text(p.name),
-              subtitle: Text(p.phone ?? ''),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(icon: const Icon(Icons.edit), onPressed: () => _openForm(edit: p)),
-                  IconButton(icon: const Icon(Icons.delete), onPressed: () async {
-                    await ref.read(customerRepoProvider).delete(p.id);
-                    ref.invalidate(customersProvider);
-                  }),
-                ],
-              ),
-            );
-          },
-        ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) => Center(child: Text('Error: $e')),
+      appBar: AppBar(title: const Text('Mejores clientes')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _pickDate,
+                    child: Text('Fecha: ${_fmtDate.format(_anchor)}'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _period,
+                    onChanged: (v) => setState(() => _period = v ?? 'Mes'),
+                    items: const [
+                      DropdownMenuItem(value: 'Día', child: Text('Día')),
+                      DropdownMenuItem(value: 'Semana', child: Text('Semana')),
+                      DropdownMenuItem(value: 'Mes', child: Text('Mes')),
+                      DropdownMenuItem(value: 'Año', child: Text('Año')),
+                    ],
+                    decoration: const InputDecoration(labelText: 'Periodo'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => setState(() {}),
+                  child: const Text('Actualizar'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: FutureBuilder<List<Map<String, Object?>>>(
+              future: SaleRepository().topCustomers(from, to),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final rows = snapshot.data ?? const <Map<String, Object?>>[];
+                return ListView.separated(
+                  itemCount: rows.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final r = rows[i];
+                    final customerId = (r['customer_id'] as String?) ?? '';
+                    final name = (r['name'] as String?) ?? customerId;
+                    final orders = (r['orders'] as num?)?.toInt() ?? 0;
+                    final total = (r['total'] as num?)?.toDouble() ?? 0.0;
+                    final profit = (r['profit'] as num?)?.toDouble() ?? 0.0;
+                    final pct = total == 0 ? 0.0 : (profit / total * 100.0);
+                    return ListTile(
+                      title: Text(name),
+                      subtitle: Text(
+                        'Órdenes: ${orders.toString()} · Utilidad: \$${profit.toStringAsFixed(2)} · ${pct.toStringAsFixed(1)}%',
+                      ),
+                      trailing: Text(
+                        '\$${total.toStringAsFixed(2)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      onTap: () {
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          builder: (_) => _CustomerHistorySheet(
+                            customerId: customerId,
+                            from: from,
+                            to: to,
+                            fmtDT: _fmtDT,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
+}
 
-  Future<void> _openForm({Customer? edit}) async {
-    final name = TextEditingController(text: edit?.name ?? '');
-    final phone = TextEditingController(text: edit?.phone ?? '');
-    final email = TextEditingController(text: edit?.email ?? '');
-    final notes = TextEditingController(text: edit?.notes ?? '');
+class _CustomerHistorySheet extends StatelessWidget {
+  final String customerId;
+  final DateTime from;
+  final DateTime to;
+  final DateFormat fmtDT;
+  const _CustomerHistorySheet({
+    required this.customerId,
+    required this.from,
+    required this.to,
+    required this.fmtDT,
+  });
 
-    await showDialog(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: Text(edit == null ? 'Nuevo cliente' : 'Editar cliente'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: name, decoration: const InputDecoration(labelText: 'Nombre')),
-              TextField(controller: phone, decoration: const InputDecoration(labelText: 'Teléfono')),
-              TextField(controller: email, decoration: const InputDecoration(labelText: 'Email')),
-              TextField(controller: notes, decoration: const InputDecoration(labelText: 'Notas')),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: ()=> Navigator.pop(c), child: const Text('Cancelar')),
-          ElevatedButton(onPressed: () async {
-            final repo = ref.read(customerRepoProvider);
-            if (edit == null) {
-              await repo.create(Customer(
-                id: const Uuid().v4(),
-                name: name.text.trim(),
-                phone: phone.text.trim().isEmpty ? null : phone.text.trim(),
-                email: email.text.trim().isEmpty ? null : email.text.trim(),
-                notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
-              ));
-            } else {
-              await repo.update(Customer(
-                id: edit.id,
-                name: name.text.trim(),
-                phone: phone.text.trim().isEmpty ? null : phone.text.trim(),
-                email: email.text.trim().isEmpty ? null : email.text.trim(),
-                notes: notes.text.trim().isEmpty ? null : notes.text.trim(),
-                createdAt: edit.createdAt,
-                updatedAt: DateTime.now(),
-              ));
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: FutureBuilder<List<Map<String, Object?>>>(
+          future:
+              SaleRepository().history(customerId: customerId, from: from, to: to),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const SizedBox(
+                height: 200,
+                child: Center(child: CircularProgressIndicator()),
+              );
             }
-            if (mounted) Navigator.pop(c);
-            ref.invalidate(customersProvider);
-          }, child: const Text('Guardar'))
-        ],
+            final rows = snapshot.data!;
+            double total = 0.0;
+            double profit = 0.0;
+            for (final r in rows) {
+              total += (r['total'] as num?)?.toDouble() ?? 0.0;
+              profit += (r['profit'] as num?)?.toDouble() ?? 0.0;
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: Text('\$${total.toStringAsFixed(2)}'),
+                  subtitle: Text('${rows.length} ventas'),
+                  trailing: Text('Utilidad \$${profit.toStringAsFixed(2)}'),
+                ),
+                const Divider(height: 1),
+                ...rows.map((r) {
+                  final whenStr = (r['created_at'] as String?) ?? '';
+                  DateTime? when;
+                  try {
+                    when = DateTime.parse(whenStr);
+                  } catch (_) {}
+                  final t = (r['total'] as num?)?.toDouble() ?? 0.0;
+                  final p = (r['profit'] as num?)?.toDouble() ?? 0.0;
+                  return ListTile(
+                    title: Text('\$${t.toStringAsFixed(2)}'),
+                    subtitle: Text(when != null ? fmtDT.format(when) : whenStr),
+                    trailing: Text('Utilidad \$${p.toStringAsFixed(2)}'),
+                  );
+                }).toList(),
+                const SizedBox(height: 12),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

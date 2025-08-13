@@ -1,126 +1,161 @@
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../repositories/sale_repository.dart';
 import '../repositories/customer_repository.dart';
-import '../models/customer.dart';
+import '../repositories/sale_repository.dart';
 
 class SalesHistoryPage extends StatefulWidget {
   const SalesHistoryPage({super.key});
+
   @override
   State<SalesHistoryPage> createState() => _SalesHistoryPageState();
 }
 
 class _SalesHistoryPageState extends State<SalesHistoryPage> {
   String? _customerId;
-  DateTime? _from;
-  DateTime? _to;
-  bool _btnLoading = false;
+  DateTime _from = DateTime(DateTime.now().year, DateTime.now().month, 1);
+  DateTime _to = DateTime.now();
 
-  Future<List<Customer>> _loadCustomers() => CustomerRepository().all();
+  final _fmtDate = DateFormat('yyyy-MM-dd');
+  final _fmtDT = DateFormat('yyyy-MM-dd HH:mm');
+
+  Future<List<Map<String, Object?>>> _loadCustomers() => CustomerRepository().all();
+
+  Future<List<Map<String, Object?>>> _loadHistory() async {
+    try {
+      return await SaleRepository().history(customerId: _customerId, from: _from, to: _to);
+    } catch (_) {
+      // Si tu repo usa otra firma, adapta aquí.
+      return <Map<String, Object?>>[];
+    }
+  }
+
+  Future<void> _pickFrom() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _from,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) setState(() => _from = picked);
+  }
+
+  Future<void> _pickTo() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _to,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) setState(() => _to = picked);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Historial de ventas'),
-        leading: Padding(padding: const EdgeInsets.all(8), child: CircleAvatar(backgroundImage: AssetImage('assets/logo.png'))),
-      ),
+      appBar: AppBar(title: const Text('Historial de ventas')),
       body: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
             Row(
               children: [
-                Expanded(child: _customerPicker()),
+                Expanded(
+                  child: FutureBuilder<List<Map<String, Object?>>> (
+                    future: _loadCustomers(),
+                    builder: (context, snap) {
+                      final items = snap.data ?? const <Map<String, Object?>>[];
+                      final dropdownItems = <DropdownMenuItem<String?>>[
+                        const DropdownMenuItem(value: null, child: Text('Todos los clientes')),
+                        ...items.map((c) {
+                          final id = (c['id'] ?? '') as String;
+                          final name = ((c['name'] ?? '') as String);
+                          return DropdownMenuItem(value: id, child: Text(name.isEmpty ? id : name));
+                        }),
+                      ];
+                      return DropdownButtonFormField<String?>(
+                        value: _customerId,
+                        items: dropdownItems,
+                        onChanged: (v) => setState(() => _customerId = v),
+                        decoration: const InputDecoration(labelText: 'Cliente'),
+                      );
+                    },
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: _dateButton('Desde', (d){ setState(()=> _from = d); })),
+                Expanded(
+                  child: InkWell(
+                    onTap: _pickFrom,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(labelText: 'Desde'),
+                      child: Text(_fmtDate.format(_from)),
+                    ),
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: _dateButton('Hasta', (d){ setState(()=> _to = d); })),
+                Expanded(
+                  child: InkWell(
+                    onTap: _pickTo,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(labelText: 'Hasta'),
+                      child: Text(_fmtDate.format(_to)),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Actualizar',
+                  onPressed: () => setState(() {}),
+                  icon: const Icon(Icons.refresh),
+                ),
               ],
             ),
             const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: _btnLoading ? null : () async {
-                setState(()=> _btnLoading = true);
-                setState((){});
-                await Future.delayed(const Duration(milliseconds: 400));
-                setState(()=> _btnLoading = false);
-              },
-              child: _btnLoading ? const SizedBox(width:20,height:20,child:CircularProgressIndicator(strokeWidth:2)) : const Text('Buscar'),
+            Expanded(
+              child: FutureBuilder<List<Map<String, Object?>>> (
+                future: _loadHistory(),
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final rows = snap.data ?? const <Map<String, Object?>>[];
+                  if (rows.isEmpty) return const Center(child: Text('Sin ventas'));
+
+                  return ListView.separated(
+                    itemCount: rows.length,
+                    separatorBuilder: (_, __) => const Divider(height: 0),
+                    itemBuilder: (context, i) {
+                      final m = rows[i];
+                      final id = (m['id'] ?? '') as String;
+                      final total = (m['total'] as num?)?.toDouble() ?? 0.0;
+                      final profit = (m['profit'] as num?)?.toDouble() ?? 0.0;
+                      final discount = (m['discount'] as num?)?.toDouble() ?? 0.0;
+                      final pay = (m['payment_method'] ?? m['paymentMethod'] ?? '-') as String;
+                      final customerName = (m['customer_name'] ?? m['name'] ?? m['customerId'] ?? '-') as String;
+                      final createdAtStr = (m['created_at'] ?? m['createdAt'] ?? '') as String;
+                      DateTime? createdAt;
+                      try { createdAt = DateTime.tryParse(createdAtStr); } catch (_) {}
+                      final when = createdAt == null ? '-' : _fmtDT.format(createdAt);
+
+                      return ListTile(
+                        title: Text('Venta $id'),
+                        subtitle: Text('$when · Cliente: $customerName · Pago: $pay · Desc: \$${discount.toStringAsFixed(2)}'),
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text('\$' + total.toStringAsFixed(2), style: const TextStyle(fontWeight: FontWeight.bold)),
+                            Text('Utilidad \$' + profit.toStringAsFixed(2)),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-            const Divider(height: 16),
-            Expanded(child: _results()),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _customerPicker() {
-    return FutureBuilder<List<Customer>>(
-      future: _loadCustomers(),
-      builder: (c, snap) {
-        final list = snap.data ?? [];
-        return DropdownButtonFormField<String>(
-          value: _customerId,
-          items: [
-            const DropdownMenuItem(value: null, child: Text('Todos los clientes')),
-            ...list.map((e)=> DropdownMenuItem(value: e.id, child: Text(e.name)))
-          ],
-          onChanged: (v)=> _customerId = v,
-          decoration: const InputDecoration(labelText: 'Cliente'),
-        );
-      },
-    );
-  }
-
-  Widget _dateButton(String label, void Function(DateTime?) onPick) {
-    final fmt = DateFormat('yyyy-MM-dd');
-    final current = (label=='Desde') ? _from : _to;
-    return OutlinedButton(
-      onPressed: () async {
-        final now = DateTime.now();
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: current ?? now,
-          firstDate: DateTime(now.year - 5),
-          lastDate: DateTime(now.year + 5),
-        );
-        onPick(picked);
-      },
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Text('$label: ${current == null ? '-' : fmt.format(current)}'),
-      ),
-    );
-  }
-
-  Widget _results() {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: SaleRepository().history(customerId: _customerId, from: _from, to: _to),
-      builder: (c, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final rows = snap.data ?? [];
-        if (rows.isEmpty) return const Center(child: Text('Sin resultados'));
-        return ListView.builder(
-          itemCount: rows.length,
-          itemBuilder: (c, i) {
-            final r = rows[i];
-            final total = (r['total'] ?? 0).toString();
-            final discount = (r['discount'] ?? 0).toString();
-            final pay = (r['payment_method'] ?? '').toString();
-            final profit = (r['profit'] ?? 0).toString();
-            final customerName = (r['customer_name'] ?? '(sin cliente)').toString();
-            final createdAt = (r['created_at'] ?? '').toString();
-            return ListTile(
-              title: Text('Total: $total  | Descuento: $discount  | Pago: $pay  | Utilidad: $profit'),
-              subtitle: Text('$customerName — $createdAt'),
-            );
-          },
-        );
-      },
     );
   }
 }

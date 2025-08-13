@@ -40,14 +40,6 @@ jobs:
           echo "APP_DIR=$APP_DIR" >> $GITHUB_ENV
           echo "Detected APP_DIR=$APP_DIR"
 
-      - name: Regenerate Android project (embedding v2)
-        shell: bash
-        run: |
-          set -e
-          cd "$APP_DIR"
-          rm -rf android
-          flutter create --platforms=android .
-
       - name: Force NDK 27 (inject)
         shell: bash
         run: |

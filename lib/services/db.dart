@@ -92,7 +92,6 @@ class AppDatabase {
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Ejemplo de migraciones simples
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE sales ADD COLUMN shipping REAL NOT NULL DEFAULT 0;');
     }

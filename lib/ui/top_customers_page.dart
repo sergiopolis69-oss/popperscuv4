@@ -11,145 +11,116 @@ class TopCustomersPage extends StatefulWidget {
 }
 
 class _TopCustomersPageState extends State<TopCustomersPage> {
-  String _period = 'Mes';
   DateTime _anchor = DateTime.now();
+  String _period = 'Mes'; // Día, Semana, Mes, Año
+  final _fmtDate = DateFormat('yyyy-MM-dd');
+  final _fmtDT = DateFormat('yyyy-MM-dd HH:mm');
 
-  DateTimeRange _rangeFor(String period, DateTime anchor) {
-    switch (period) {
+  (DateTime, DateTime) _range() {
+    final a = DateTime(_anchor.year, _anchor.month, _anchor.day);
+    switch (_period) {
       case 'Día':
-        final start = DateTime(anchor.year, anchor.month, anchor.day);
-        final end = DateTime(anchor.year, anchor.month, anchor.day, 23, 59, 59, 999);
-        return DateTimeRange(start: start, end: end);
+        return (a, a.add(const Duration(days: 1)));
       case 'Semana':
-        final monday = anchor.subtract(Duration(days: anchor.weekday - 1));
-        final sunday = monday.add(const Duration(days: 6));
-        return DateTimeRange(
-          start: DateTime(monday.year, monday.month, monday.day),
-          end: DateTime(sunday.year, sunday.month, sunday.day, 23, 59, 59, 999),
-        );
+        final w0 = a.subtract(Duration(days: a.weekday - 1));
+        final w1 = w0.add(const Duration(days: 7));
+        return (w0, w1);
       case 'Año':
-        return DateTimeRange(
-          start: DateTime(anchor.year, 1, 1),
-          end: DateTime(anchor.year, 12, 31, 23, 59, 59, 999),
-        );
+        final y0 = DateTime(a.year, 1, 1);
+        final y1 = DateTime(a.year + 1, 1, 1);
+        return (y0, y1);
       case 'Mes':
       default:
-        final start = DateTime(anchor.year, anchor.month, 1);
-        final last = DateTime(anchor.year, anchor.month + 1, 0);
-        return DateTimeRange(
-          start: start,
-          end: DateTime(last.year, last.month, last.day, 23, 59, 59, 999),
-        );
+        final m0 = DateTime(a.year, a.month, 1);
+        final m1 = DateTime(a.year, a.month + 1, 1);
+        return (m0, m1);
     }
   }
 
-  Future<List<Map<String, Object?>>> _fetch() async {
-    final r = _rangeFor(_period, _anchor);
-    try {
-      return await SaleRepository().topCustomers(r.start, r.end);
-    } catch (_) {
-      try {
-        return await (SaleRepository() as dynamic).topCustomers(from: r.start, to: r.end);
-      } catch (_) {
-        return <Map<String, Object?>>[];
-      }
-    }
-  }
-
-  Future<void> _pickAnchor() async {
-    final picked = await showDatePicker(
+  Future<void> _pickDate() async {
+    final d = await showDatePicker(
       context: context,
       initialDate: _anchor,
       firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
     );
-    if (picked != null) setState(() => _anchor = picked);
+    if (d != null) setState(() => _anchor = d);
   }
 
   @override
   Widget build(BuildContext context) {
-    final fmt = DateFormat('yyyy-MM-dd');
-    final range = _rangeFor(_period, _anchor);
+    final (from, to) = _range();
     return Scaffold(
-      appBar: AppBar(title: const Text('Top clientes')),
-      body: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Row(
+      appBar: AppBar(title: const Text('Mejores clientes')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
               children: [
-                DropdownButton<String>(
-                  value: _period,
-                  items: const [
-                    DropdownMenuItem(value: 'Día', child: Text('Día')),
-                    DropdownMenuItem(value: 'Semana', child: Text('Semana')),
-                    DropdownMenuItem(value: 'Mes', child: Text('Mes')),
-                    DropdownMenuItem(value: 'Año', child: Text('Año')),
-                  ],
-                  onChanged: (v) => setState(() => _period = v ?? 'Mes'),
-                ),
-                const SizedBox(width: 8),
-                InkWell(
-                  onTap: _pickAnchor,
-                  child: InputDecorator(
-                    decoration: const InputDecoration(labelText: 'Fecha'),
-                    child: Text(fmt.format(_anchor)),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _pickDate,
+                    child: Text('Fecha: ${_fmtDate.format(_anchor)}'),
                   ),
                 ),
-                const Spacer(),
-                IconButton(
-                  tooltip: 'Actualizar',
-                  onPressed: () => setState(() {}),
-                  icon: const Icon(Icons.refresh),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _period,
+                    onChanged: (v) => setState(() => _period = v ?? 'Mes'),
+                    items: const [
+                      DropdownMenuItem(value: 'Día', child: Text('Día')),
+                      DropdownMenuItem(value: 'Semana', child: Text('Semana')),
+                      DropdownMenuItem(value: 'Mes', child: Text('Mes')),
+                      DropdownMenuItem(value: 'Año', child: Text('Año')),
+                    ],
+                    decoration: const InputDecoration(labelText: 'Periodo'),
+                  ),
                 ),
+                const SizedBox(width: 8),
+                FilledButton(onPressed: () => setState(() {}), child: const Text('Actualizar')),
               ],
             ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 8),
-                child: Text('Rango: ' + fmt.format(range.start) + ' a ' + fmt.format(range.end)),
-              ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: FutureBuilder<List<Map<String, Object?}}>>(
+              future: SaleRepository().topCustomers(from, to),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final rows = snapshot.data ?? const <Map<String, Object?>>[];
+                return ListView.separated(
+                  itemCount: rows.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final r = rows[i];
+                    final customerId = (r['customer_id'] as String?) ?? '';
+                    final name = (r['name'] as String?) ?? customerId;
+                    final orders = (r['orders'] as num?)?.toInt() ?? 0;
+                    final total = (r['total'] as num?)?.toDouble() ?? 0.0;
+                    final profit = (r['profit'] as num?)?.toDouble() ?? 0.0;
+                    final pct = total == 0 ? 0.0 : (profit / total * 100.0);
+                    return ListTile(
+                      title: Text(name),
+                      subtitle: Text('Órdenes: ${orders.toString()} · Utilidad: \$${profit.toStringAsFixed(2)} · ${pct.toStringAsFixed(1)}%'),
+                      trailing: Text('\$${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      onTap: () {
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          builder: (_) => _CustomerHistorySheet(customerId: customerId, from: from, to: to, fmtDT: _fmtDT),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
             ),
-            Expanded(
-              child: FutureBuilder<List<Map<String, Object?>>> (
-                future: _fetch(),
-                builder: (context, snap) {
-                  if (snap.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final rows = snap.data ?? const <Map<String, Object?>>[];
-                  if (rows.isEmpty) return const Center(child: Text('Sin datos'));
-
-                  return ListView.separated(
-                    itemCount: rows.length,
-                    separatorBuilder: (_, __) => const Divider(height: 0),
-                    itemBuilder: (context, i) {
-                      final m = rows[i];
-                      final name = (m['name'] ?? m['customer_name'] ?? m['customerId'] ?? '-') as String;
-                      final total = (m['total'] as num?)?.toDouble() ?? 0.0;
-                      final profit = (m['profit'] as num?)?.toDouble() ?? 0.0;
-                      final orders = (m['orders'] as num?)?.toInt() ?? (m['count'] as num?)?.toInt() ?? 0;
-                      final pct = total == 0 ? 0 : (profit / total * 100);
-                      return ListTile(
-                        title: Text(name),
-                        subtitle: Text('Órdenes: ' + orders.toString() + ' · Utilidad: \\$' + profit.toStringAsFixed(2) + ' · ' + pct.toStringAsFixed(1) + '%'),
-                        trailing: Text('\\$' + total.toStringAsFixed(2), style: const TextStyle(fontWeight: FontWeight.bold)),
-                        onTap: () async {
-                          final r = _rangeFor(_period, _anchor);
-                          showModalBottomSheet(
-                            context: context,
-                            builder: (_) => _CustomerHistorySheet(customerId: (m['customer_id'] ?? m['customerId'] ?? '') as String, name: name, from: r.start, to: r.end),
-                          );
-                        },
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -157,62 +128,55 @@ class _TopCustomersPageState extends State<TopCustomersPage> {
 
 class _CustomerHistorySheet extends StatelessWidget {
   final String customerId;
-  final String name;
   final DateTime from;
   final DateTime to;
-
-  const _CustomerHistorySheet({required this.customerId, required this.name, required this.from, required this.to});
+  final DateFormat fmtDT;
+  const _CustomerHistorySheet({required this.customerId, required this.from, required this.to, required this.fmtDT});
 
   @override
   Widget build(BuildContext context) {
-    final fmt = DateFormat('yyyy-MM-dd HH:mm');
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Compras de ' + name, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          FutureBuilder<List<Map<String, Object?>>> (
-            future: SaleRepository().history(customerId: customerId, from: from, to: to),
-            builder: (context, snap) {
-              if (snap.connectionState != ConnectionState.done) {
-                return const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-              final rows = snap.data ?? const <Map<String, Object?>>[];
-              if (rows.isEmpty) return const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('Sin compras en el periodo'),
-              );
-
-              return SizedBox(
-                height: MediaQuery.of(context).size.height * 0.6,
-                child: ListView.separated(
-                  itemCount: rows.length,
-                  separatorBuilder: (_, __) => const Divider(height: 0),
-                  itemBuilder: (context, i) {
-                    final m = rows[i];
-                    final total = (m['total'] as num?)?.toDouble() ?? 0.0;
-                    final profit = (m['profit'] as num?)?.toDouble() ?? 0.0;
-                    final createdAtStr = (m['created_at'] ?? m['createdAt'] ?? '') as String;
-                    DateTime? createdAt;
-                    try { createdAt = DateTime.tryParse(createdAtStr); } catch (_) {}
-                    final when = createdAt == null ? '-' : fmt.format(createdAt);
-                    return ListTile(
-                      title: Text('\\$' + total.toStringAsFixed(2)),
-                      subtitle: Text(when),
-                      trailing: Text('Utilidad \\$' + profit.toStringAsFixed(2)),
-                    );
-                  },
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: FutureBuilder<List<Map<String, Object?}}>>(
+          future: SaleRepository().history(customerId: customerId, from: from, to: to),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const SizedBox(height: 200, child: Center(child: CircularProgressIndicator()));
+            }
+            final rows = snapshot.data!;
+            double total = 0.0;
+            double profit = 0.0;
+            for (final r in rows) {
+              total += (r['total'] as num?)?.toDouble() ?? 0.0;
+              profit += (r['profit'] as num?)?.toDouble() ?? 0.0;
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: Text('\$${total.toStringAsFixed(2)}'),
+                  subtitle: Text('${rows.length} ventas'),
+                  trailing: Text('Utilidad \$${profit.toStringAsFixed(2)}'),
                 ),
-              );
-            },
-          ),
-        ],
+                const Divider(height: 1),
+                ...rows.map((r) {
+                  final whenStr = (r['created_at'] as String?) ?? '';
+                  DateTime? when;
+                  try { when = DateTime.parse(whenStr); } catch (_) {}
+                  final t = (r['total'] as num?)?.toDouble() ?? 0.0;
+                  final p = (r['profit'] as num?)?.toDouble() ?? 0.0;
+                  return ListTile(
+                    title: Text('\$${t.toStringAsFixed(2)}'),
+                    subtitle: Text(when != null ? fmtDT.format(when) : whenStr),
+                    trailing: Text('Utilidad \$${p.toStringAsFixed(2)}'),
+                  );
+                }).toList(),
+                const SizedBox(height: 12),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

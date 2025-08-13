@@ -85,7 +85,7 @@ class _TopCustomersPageState extends State<TopCustomersPage> {
           ),
           const Divider(height: 1),
           Expanded(
-            child: FutureBuilder<List<Map<String, Object?}}>>(
+            child: FutureBuilder<List<Map<String, Object?>>>>(
               future: SaleRepository().topCustomers(from, to),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -138,7 +138,7 @@ class _CustomerHistorySheet extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: FutureBuilder<List<Map<String, Object?}}>>(
+        child: FutureBuilder<List<Map<String, Object?>>>>(
           future: SaleRepository().history(customerId: customerId, from: from, to: to),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {

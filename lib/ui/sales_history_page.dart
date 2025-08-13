@@ -86,7 +86,7 @@ class _SalesHistoryPageState extends State<SalesHistoryPage> {
           ),
           const Divider(height: 1),
           Expanded(
-            child: FutureBuilder<List<Map<String, Object?}}>>(
+            child: FutureBuilder<List<Map<String, Object?>>>>(
               future: SaleRepository().history(customerId: _customerId, from: _from, to: _to),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {

@@ -4,11 +4,12 @@ import '../db/db.dart';
 class SaleRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
 
-  Future<String> save(Map<String, Object?> sale, List<Map<String, Object?>> items) {
-    return create(sale, items);
-  }
+  Future<String> save(
+          Map<String, Object?> sale, List<Map<String, Object?>> items) =>
+      create(sale, items);
 
-  Future<String> create(Map<String, Object?> sale, List<Map<String, Object?>> items) async {
+  Future<String> create(
+      Map<String, Object?> sale, List<Map<String, Object?>> items) async {
     final db = await _db;
 
     double subtotal = 0;
@@ -17,7 +18,7 @@ class SaleRepository {
     final preparedItems = items.map<Map<String, Object?>>((it) {
       final qty = (it['quantity'] as num).toInt();
       final price = (it['price'] as num).toDouble();
-      final cost  = (it['cost']  as num?)?.toDouble() ?? 0.0;
+      final cost = (it['cost'] as num?)?.toDouble() ?? 0.0;
       final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
 
       final sub = (price * qty) - lineDiscount;
@@ -43,7 +44,8 @@ class SaleRepository {
     final discount = (sale['discount'] as num?)?.toDouble() ?? 0.0;
     final shipping = (sale['shippingCost'] as num?)?.toDouble() ?? 0.0;
     final profit = itemsProfit - discount;
-    final total = (sale['total'] as num?)?.toDouble() ?? (subtotal - discount + shipping);
+    final total =
+        (sale['total'] as num?)?.toDouble() ?? (subtotal - discount + shipping);
 
     final saleId = sale['id']?.toString() ?? genId();
     final createdAt = (sale['createdAt']?.toString()) ?? nowIso();
@@ -79,7 +81,8 @@ class SaleRepository {
 
         final productId = it['product_id']?.toString();
         if (productId != null && productId.isNotEmpty) {
-          final cur = await txn.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
+          final cur = await txn.query('products',
+              where: 'id = ?', whereArgs: [productId], limit: 1);
           if (cur.isNotEmpty) {
             final current = (cur.first['stock'] as int);
             final newStock = current - (it['quantity'] as int);
@@ -128,7 +131,8 @@ class SaleRepository {
     ''', args);
   }
 
-  Future<List<Map<String, Object?>>> topCustomers(DateTime from, DateTime to) async {
+  Future<List<Map<String, Object?>>> topCustomers(
+      DateTime from, DateTime to) async {
     final db = await _db;
     return db.rawQuery('''
       SELECT

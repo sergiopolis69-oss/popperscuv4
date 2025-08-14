@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import '../db/db.dart';
+import 'package:popperscuv/db/db.dart';
 
 class CustomerRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
@@ -38,7 +38,6 @@ class CustomerRepository {
     await db.insert('customers', row, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// Wrapper compatible con UI que usa argumentos con nombre
   Future<void> upsertCustomerNamed({
     String? id,
     required String name,
@@ -46,7 +45,7 @@ class CustomerRepository {
     String? notes,
   }) async {
     await upsertCustomer({
-      'id': id ?? phone, // si no viene id, usamos el teléfono
+      'id': id ?? phone,
       'name': name,
       'phone': phone,
       'notes': notes,

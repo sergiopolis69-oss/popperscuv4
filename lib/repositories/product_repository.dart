@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import '../db/db.dart';
+import 'package:popperscuv/db/db.dart'; // <— usa import por paquete
 
 class ProductRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
@@ -31,7 +31,6 @@ class ProductRepository {
     return rows.map((e) => (e['category'] as String)).toList();
   }
 
-  /// Inserta/actualiza con Map (llaves snake_case)
   Future<void> upsertProduct(Map<String, Object?> data) async {
     final db = await _db;
     final id = (data['id']?.toString() ?? genId());
@@ -50,7 +49,7 @@ class ProductRepository {
     await db.insert('products', row, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// Wrapper compatible con UI que usa argumentos con nombre
+  // Wrapper compatible con la UI (argumentos con nombre)
   Future<void> upsertProductNamed({
     String? id,
     required String name,
@@ -79,7 +78,6 @@ class ProductRepository {
   Future<void> adjustStock(String productId, int delta, {String? note}) async {
     final db = await _db;
     await db.transaction((txn) async {
-      // Lee stock actual
       final cur = await txn.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
       if (cur.isEmpty) return;
       final current = (cur.first['stock'] as int);

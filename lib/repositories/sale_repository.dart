@@ -1,10 +1,9 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:popperscuv/db/db.dart';
+import '../db/db.dart';
 
 class SaleRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
 
-  /// Alias de compatibilidad
   Future<String> save(Map<String, Object?> sale, List<Map<String, Object?>> items) {
     return create(sale, items);
   }

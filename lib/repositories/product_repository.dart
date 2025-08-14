@@ -46,7 +46,8 @@ class ProductRepository {
       'updated_at': now,
       'created_at': data['created_at'] ?? now,
     };
-    await db.insert('products', row, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('products', row,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> upsertProductNamed({
@@ -77,7 +78,8 @@ class ProductRepository {
   Future<void> adjustStock(String productId, int delta, {String? note}) async {
     final db = await _db;
     await db.transaction((txn) async {
-      final cur = await txn.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
+      final cur = await txn
+          .query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
       if (cur.isEmpty) return;
       final current = (cur.first['stock'] as int);
       final newStock = current + delta;

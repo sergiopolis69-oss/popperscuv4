@@ -38,6 +38,7 @@ class CustomerRepository {
     await db.insert('customers', row, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  // Firma que llama tu UI
   Future<void> upsertCustomerNamed({
     String? id,
     required String name,

@@ -1,93 +1,178 @@
-import 'package:uuid/uuid.dart';
-import '../services/db.dart';
-import '../models/sale.dart';
-import '../models/sale_item.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:popperscuv/db/db.dart';
 
 class SaleRepository {
-  final _uuid = const Uuid();
+  Future<Database> get _db async => AppDatabase.instance.database;
 
-  Future<void> createSale({
-    String? customerId,
-    required List<SaleItem> items,
-    required double discount,
-    required String paymentMethod,
-  }) async {
-    final db = await AppDatabase().database;
+  Future<String> save(
+          Map<String, Object?> sale, List<Map<String, Object?>> items) =>
+      create(sale, items);
+
+  Future<String> create(
+      Map<String, Object?> sale, List<Map<String, Object?>> items) async {
+    final db = await _db;
+
+    double subtotal = 0;
+    double itemsProfit = 0;
+
+    final preparedItems = items.map<Map<String, Object?>>((it) {
+      final qty = (it['quantity'] as num).toInt();
+      final price = (it['price'] as num).toDouble();
+      final cost = (it['cost'] as num?)?.toDouble() ?? 0.0;
+      final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
+
+      final sub = (price * qty) - lineDiscount;
+      final prof = (price - cost) * qty - lineDiscount;
+
+      subtotal += sub;
+      itemsProfit += prof;
+
+      return {
+        'id': it['id']?.toString() ?? genId(),
+        'product_id': it['productId'],
+        'name': it['name'],
+        'sku': it['sku'],
+        'quantity': qty,
+        'price': price,
+        'cost': cost,
+        'line_discount': lineDiscount,
+        'subtotal': sub,
+        'profit': prof,
+      };
+    }).toList();
+
+    final discount = (sale['discount'] as num?)?.toDouble() ?? 0.0;
+    final shipping = (sale['shippingCost'] as num?)?.toDouble() ?? 0.0;
+    final profit = itemsProfit - discount;
+    final total =
+        (sale['total'] as num?)?.toDouble() ?? (subtotal - discount + shipping);
+
+    final saleId = sale['id']?.toString() ?? genId();
+    final createdAt = (sale['createdAt']?.toString()) ?? nowIso();
+    final paymentMethod = sale['paymentMethod']?.toString() ?? 'Efectivo';
+    final customerId = sale['customerId']?.toString();
+
     await db.transaction((txn) async {
-      double subtotal = 0;
-      double costTotal = 0;
-      for (final it in items) {
-        subtotal += it.subtotal;
-        costTotal += (it.costAtSale * it.quantity);
-      }
-      double total = subtotal - discount;
-      if (total < 0) total = 0;
-      final profit = total - costTotal;
+      await txn.insert('sales', {
+        'id': saleId,
+        'customer_id': customerId,
+        'total': total,
+        'discount': discount,
+        'shipping_cost': shipping,
+        'profit': profit,
+        'payment_method': paymentMethod,
+        'created_at': createdAt,
+      });
 
-      final saleId = _uuid.v4();
-      final sale = Sale(
-        id: saleId,
-        customerId: customerId,
-        total: total,
-        discount: discount,
-        paymentMethod: paymentMethod,
-        profit: profit,
-      );
-      await txn.insert('sales', sale.toMap());
+      for (final it in preparedItems) {
+        await txn.insert('sale_items', {
+          'id': it['id'],
+          'sale_id': saleId,
+          'product_id': it['product_id'],
+          'name': it['name'],
+          'sku': it['sku'],
+          'quantity': it['quantity'],
+          'price': it['price'],
+          'cost': it['cost'],
+          'line_discount': it['line_discount'],
+          'subtotal': it['subtotal'],
+          'profit': it['profit'],
+        });
 
-      for (final it in items) {
-        final row = it.toMap();
-        row['id'] = _uuid.v4();
-        row['sale_id'] = saleId;
-        await txn.insert('sale_items', row);
-        await txn.rawUpdate('UPDATE products SET stock = stock - ? WHERE id = ?', [it.quantity, it.productId]);
+        final productId = it['product_id']?.toString();
+        if (productId != null && productId.isNotEmpty) {
+          final cur = await txn.query('products',
+              where: 'id = ?', whereArgs: [productId], limit: 1);
+          if (cur.isNotEmpty) {
+            final current = (cur.first['stock'] as int);
+            final newStock = current - (it['quantity'] as int);
+            await txn.update('products', {'stock': newStock, 'updated_at': nowIso()},
+                where: 'id = ?', whereArgs: [productId]);
+            await txn.insert('inventory_movements', {
+              'id': genId(),
+              'product_id': productId,
+              'delta': -(it['quantity'] as int),
+              'note': 'venta $saleId',
+              'created_at': nowIso(),
+            });
+          }
+        }
       }
     });
+
+    return saleId;
   }
 
-  Future<List<Map<String, dynamic>>> history({String? customerId, DateTime? from, DateTime? to}) async {
-    final db = await AppDatabase().database;
-    final where = <String>[]; final args = <dynamic>[];
-    if (customerId != null && customerId.isNotEmpty) { where.add('s.customer_id = ?'); args.add(customerId); }
-    if (from != null) { where.add('s.created_at >= ?'); args.add(from.toIso8601String()); }
-    if (to != null)   { where.add('s.created_at <= ?'); args.add(to.toIso8601String()); }
-    final sql = '''
-      SELECT s.id, s.created_at, s.total, s.discount, s.payment_method, s.profit,
-             c.name as customer_name
+  Future<List<Map<String, Object?>>> history({
+    String? customerId,
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final db = await _db;
+    final where = <String>[];
+    final args = <Object?>[];
+
+    if (customerId != null && customerId.isNotEmpty) {
+      where.add('s.customer_id = ?');
+      args.add(customerId);
+    }
+    if (from != null && to != null) {
+      where.add('s.created_at BETWEEN ? AND ?');
+      args.add(from.toIso8601String());
+      args.add(to.toIso8601String());
+    }
+
+    return db.rawQuery('''
+      SELECT s.*, c.name AS customer_name
       FROM sales s
       LEFT JOIN customers c ON c.id = s.customer_id
-      ${where.isEmpty ? '' : 'WHERE ' + where.join(' AND ')}
+      ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
       ORDER BY s.created_at DESC
-    ''';
-    return db.rawQuery(sql, args);
+    ''', args);
   }
 
-  Future<List<Map<String, dynamic>>> topCustomers(DateTime from, DateTime to, {int limit = 50}) async {
-    final db = await AppDatabase().database;
-    final sql = '''
-      SELECT s.customer_id, COALESCE(c.name, '(sin cliente)') as customer_name,
-             COUNT(*) as orders, SUM(s.total) as spent, SUM(s.profit) as profit
+  Future<List<Map<String, Object?>>> topCustomers(
+      DateTime from, DateTime to) async {
+    final db = await _db;
+    return db.rawQuery('''
+      SELECT
+        s.customer_id,
+        COALESCE(c.name, 'Mostrador') AS name,
+        COUNT(*) AS orders,
+        SUM(s.total)  AS total,
+        SUM(s.profit) AS profit
       FROM sales s
       LEFT JOIN customers c ON c.id = s.customer_id
-      WHERE s.created_at >= ? AND s.created_at <= ?
+      WHERE s.created_at BETWEEN ? AND ?
       GROUP BY s.customer_id, c.name
-      ORDER BY spent DESC
-      LIMIT ?
-    ''';
-    return db.rawQuery(sql, [from.toIso8601String(), to.toIso8601String(), limit]);
+      ORDER BY total DESC
+    ''', [from.toIso8601String(), to.toIso8601String()]);
   }
 
-  Future<Map<String, double>> summary(DateTime from, DateTime to) async {
-    final db = await AppDatabase().database;
-    final res = await db.rawQuery('''
-      SELECT COALESCE(SUM(total),0) as revenue,
-             COALESCE(SUM(profit),0) as profit
+  Future<Map<String, Object?>> summary(DateTime from, DateTime to) async {
+    final db = await _db;
+    final rows = await db.rawQuery('''
+      SELECT
+        SUM(total)  AS total,
+        SUM(discount) AS discount,
+        SUM(shipping_cost) AS shipping_cost,
+        SUM(profit) AS profit
       FROM sales
-      WHERE created_at >= ? AND created_at <= ?
+      WHERE created_at BETWEEN ? AND ?
     ''', [from.toIso8601String(), to.toIso8601String()]);
-    final row = res.isNotEmpty ? res.first : {'revenue': 0, 'profit': 0};
-    final rev = (row['revenue'] as num).toDouble();
-    final prof = (row['profit'] as num).toDouble();
-    return {'revenue': rev, 'profit': prof};
+
+    final m = rows.isNotEmpty ? rows.first : <String, Object?>{};
+    final total = (m['total'] as num?)?.toDouble() ?? 0.0;
+    final profit = (m['profit'] as num?)?.toDouble() ?? 0.0;
+    final discount = (m['discount'] as num?)?.toDouble() ?? 0.0;
+    final shipping = (m['shipping_cost'] as num?)?.toDouble() ?? 0.0;
+    final pct = total > 0 ? (profit / total) * 100.0 : 0.0;
+    return {
+      'total': total,
+      'discount': discount,
+      'shipping_cost': shipping,
+      'profit': profit,
+      'profit_pct': pct,
+    };
   }
 }

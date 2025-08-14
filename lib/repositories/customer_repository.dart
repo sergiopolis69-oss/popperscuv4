@@ -1,26 +1,60 @@
-import '../services/db.dart';
-import '../models/customer.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:popperscuv/db/db.dart';
 
 class CustomerRepository {
-  Future<List<Customer>> all() async {
-    final db = await AppDatabase().database;
-    final rows = await db.query('customers', orderBy: 'created_at DESC');
-    return rows.map((e) => Customer.fromMap(e)).toList();
+  Future<Database> get _db async => AppDatabase.instance.database;
+
+  Future<List<Map<String, Object?>>> all() async {
+    final db = await _db;
+    return db.query('customers', orderBy: 'updated_at DESC, name ASC');
   }
 
-  Future<Customer> create(Customer c) async {
-    final db = await AppDatabase().database;
-    await db.insert('customers', c.toMap());
-    return c;
+  Future<List<Map<String, Object?>>> searchByNameOrPhone(String q) async {
+    final db = await _db;
+    final like = '%${q.trim()}%';
+    return db.query(
+      'customers',
+      where: 'name LIKE ? OR phone LIKE ?',
+      whereArgs: [like, like],
+      orderBy: 'name ASC',
+      limit: 50,
+    );
   }
 
-  Future<void> update(Customer c) async {
-    final db = await AppDatabase().database;
-    await db.update('customers', c.toMap(), where: 'id = ?', whereArgs: [c.id]);
+  Future<void> upsertCustomer(Map<String, Object?> data) async {
+    final db = await _db;
+    final String id = (data['id']?.toString().trim().isNotEmpty ?? false)
+        ? data['id'].toString()
+        : (data['phone']?.toString() ?? genId());
+    final now = nowIso();
+    final row = {
+      'id': id,
+      'name': data['name'],
+      'phone': data['phone'],
+      'notes': data['notes'],
+      'updated_at': now,
+      'created_at': data['created_at'] ?? now,
+    };
+    await db.insert('customers', row,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  Future<void> delete(String id) async {
-    final db = await AppDatabase().database;
+  Future<void> upsertCustomerNamed({
+    String? id,
+    required String name,
+    String? phone,
+    String? notes,
+  }) async {
+    await upsertCustomer({
+      'id': id ?? phone,
+      'name': name,
+      'phone': phone,
+      'notes': notes,
+    });
+  }
+
+  Future<void> deleteById(String id) async {
+    final db = await _db;
     await db.delete('customers', where: 'id = ?', whereArgs: [id]);
   }
 }

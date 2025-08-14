@@ -1,27 +1,28 @@
-import 'dart:async';
+import 'dart:math';
+import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
+
+/// Utilidades simples, sin dependencias externas.
+String nowIso() => DateTime.now().toIso8601String();
+String genId() => DateTime.now().microsecondsSinceEpoch.toString() +
+    Random().nextInt(1 << 20).toString();
 
 class AppDatabase {
   AppDatabase._();
   static final AppDatabase instance = AppDatabase._();
 
-  static const _dbName = 'popperscuv.db';
-  static const _dbVersion = 3;
-
   Database? _db;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
-    final path = '${await getDatabasesPath()}/$_dbName';
+    final dir = await getDatabasesPath();
+    final path = p.join(dir, 'popperscuv.db');
+
     _db = await openDatabase(
       path,
-      version: _dbVersion,
-      onOpen: (db) async {
-        // Asegura claves foráneas en SQLite
-        await db.execute('PRAGMA foreign_keys = ON');
-      },
+      version: 3,
       onCreate: (db, version) async {
-        // productos
+        // Productos
         await db.execute('''
           CREATE TABLE products(
             id TEXT PRIMARY KEY,
@@ -31,39 +32,38 @@ class AppDatabase {
             price REAL NOT NULL,
             cost REAL NOT NULL,
             stock INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT,
-            updated_at TEXT
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
           )
         ''');
 
-        // clientes
+        // Clientes (usamos phone como identificador si no hay id)
         await db.execute('''
           CREATE TABLE customers(
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            phone TEXT UNIQUE,
+            phone TEXT,
             notes TEXT,
-            created_at TEXT,
-            updated_at TEXT
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
           )
         ''');
 
-        // ventas
+        // Ventas (usa customer_id; shipping_cost no afecta utilidad)
         await db.execute('''
           CREATE TABLE sales(
             id TEXT PRIMARY KEY,
             customer_id TEXT,
             total REAL NOT NULL,
-            discount REAL NOT NULL DEFAULT 0,
-            shipping_cost REAL NOT NULL DEFAULT 0,
-            profit REAL NOT NULL DEFAULT 0,
-            payment_method TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(customer_id) REFERENCES customers(id)
+            discount REAL NOT NULL,
+            shipping_cost REAL NOT NULL,
+            profit REAL NOT NULL,
+            payment_method TEXT NOT NULL,
+            created_at TEXT NOT NULL
           )
         ''');
 
-        // renglones de venta
+        // Items de venta
         await db.execute('''
           CREATE TABLE sale_items(
             id TEXT PRIMARY KEY,
@@ -74,18 +74,17 @@ class AppDatabase {
             quantity INTEGER NOT NULL,
             price REAL NOT NULL,
             cost REAL NOT NULL,
-            line_discount REAL NOT NULL DEFAULT 0,
+            line_discount REAL NOT NULL,
             subtotal REAL NOT NULL,
-            profit REAL NOT NULL,
-            FOREIGN KEY(sale_id) REFERENCES sales(id)
+            profit REAL NOT NULL
           )
         ''');
 
-        // movimientos de inventario
+        // Movimientos de inventario
         await db.execute('''
           CREATE TABLE inventory_movements(
             id TEXT PRIMARY KEY,
-            product_id TEXT,
+            product_id TEXT NOT NULL,
             delta INTEGER NOT NULL,
             note TEXT,
             created_at TEXT NOT NULL
@@ -93,16 +92,22 @@ class AppDatabase {
         ''');
       },
       onUpgrade: (db, oldV, newV) async {
-        // Aquí podrías manejar migraciones si vienes de esquemas previos.
-        // Ejemplo: normalizar nombres de columnas, etc.
+        // Asegura columnas con nombres correctos por si vienen de esquemas viejos
+        if (oldV < 2) {
+          await db.execute("ALTER TABLE sales ADD COLUMN shipping_cost REAL NOT NULL DEFAULT 0");
+        }
+        if (oldV < 3) {
+          // Si alguien tenía 'customerId' en lugar de 'customer_id'
+          // intenta crear vista/renombrar (best-effort, ignora si ya existe)
+          try {
+            await db.execute("ALTER TABLE sales RENAME COLUMN customerId TO customer_id");
+          } catch (_) {}
+          try {
+            await db.execute("ALTER TABLE sales RENAME COLUMN createdAt TO created_at");
+          } catch (_) {}
+        }
       },
     );
     return _db!;
   }
 }
-
-/// util: ahora ISO8601 (con milisegundos) para timestamps
-String nowIso() => DateTime.now().toIso8601String();
-
-/// util: id simple sin dependencia externa
-String genId() => DateTime.now().microsecondsSinceEpoch.toString();

@@ -1,100 +1,105 @@
-import 'dart:async';
-import 'package:sqflite/sqflite.dart';
+import 'dart:math';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart' as pp;
+import 'package:sqflite/sqflite.dart';
+
+String nowIso() => DateTime.now().toIso8601String();
+String genId() =>
+    '${DateTime.now().microsecondsSinceEpoch}${Random().nextInt(1 << 20)}';
 
 class AppDatabase {
-  static final AppDatabase _instance = AppDatabase._internal();
-  factory AppDatabase() => _instance;
-  AppDatabase._internal();
-
+  AppDatabase._();
+  static final AppDatabase instance = AppDatabase._();
   Database? _db;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
-    _db = await _init();
+    final dir = await getDatabasesPath();
+    final path = p.join(dir, 'popperscuv.db');
+    _db = await openDatabase(
+      path,
+      version: 3,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE products(
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            sku TEXT,
+            category TEXT,
+            price REAL NOT NULL,
+            cost REAL NOT NULL,
+            stock INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        ''');
+
+        await db.execute('''
+          CREATE TABLE customers(
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            phone TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        ''');
+
+        await db.execute('''
+          CREATE TABLE sales(
+            id TEXT PRIMARY KEY,
+            customer_id TEXT,
+            total REAL NOT NULL,
+            discount REAL NOT NULL,
+            shipping_cost REAL NOT NULL,
+            profit REAL NOT NULL,
+            payment_method TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        ''');
+
+        await db.execute('''
+          CREATE TABLE sale_items(
+            id TEXT PRIMARY KEY,
+            sale_id TEXT NOT NULL,
+            product_id TEXT,
+            name TEXT,
+            sku TEXT,
+            quantity INTEGER NOT NULL,
+            price REAL NOT NULL,
+            cost REAL NOT NULL,
+            line_discount REAL NOT NULL,
+            subtotal REAL NOT NULL,
+            profit REAL NOT NULL
+          )
+        ''');
+
+        await db.execute('''
+          CREATE TABLE inventory_movements(
+            id TEXT PRIMARY KEY,
+            product_id TEXT NOT NULL,
+            delta INTEGER NOT NULL,
+            note TEXT,
+            created_at TEXT NOT NULL
+          )
+        ''');
+      },
+      onUpgrade: (db, oldV, newV) async {
+        if (oldV < 2) {
+          await db.execute(
+              "ALTER TABLE sales ADD COLUMN shipping_cost REAL NOT NULL DEFAULT 0");
+        }
+        if (oldV < 3) {
+          try {
+            await db.execute(
+                "ALTER TABLE sales RENAME COLUMN customerId TO customer_id");
+          } catch (_) {}
+          try {
+            await db.execute(
+                "ALTER TABLE sales RENAME COLUMN createdAt TO created_at");
+          } catch (_) {}
+        }
+      },
+    );
     return _db!;
-  }
-
-  Future<Database> _init() async {
-    final dir = await pp.getApplicationDocumentsDirectory();
-    final path = p.join(dir.path, 'popperscuv2.db');
-    return await openDatabase(path, version: 3, onCreate: _onCreate, onUpgrade: _onUpgrade);
-  }
-
-  Future _onCreate(Database db, int version) async {
-    await db.execute('''
-      CREATE TABLE products(
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        sku TEXT,
-        cost_price REAL NOT NULL DEFAULT 0,
-        sale_price REAL NOT NULL DEFAULT 0,
-        stock INTEGER NOT NULL,
-        category TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE customers(
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        phone TEXT,
-        email TEXT,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE sales(
-        id TEXT PRIMARY KEY,
-        customer_id TEXT,
-        total REAL NOT NULL,
-        discount REAL NOT NULL,
-        payment_method TEXT NOT NULL,
-        profit REAL NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE sale_items(
-        id TEXT PRIMARY KEY,
-        sale_id TEXT NOT NULL,
-        product_id TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        price REAL NOT NULL,
-        cost_at_sale REAL NOT NULL DEFAULT 0,
-        line_discount REAL NOT NULL DEFAULT 0,
-        subtotal REAL NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE inventory_movements(
-        id TEXT PRIMARY KEY,
-        product_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        reason TEXT,
-        ref_sale_id TEXT,
-        created_at TEXT NOT NULL
-      )
-    ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at);');
-  }
-
-  Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      try { await db.execute('ALTER TABLE sale_items ADD COLUMN line_discount REAL NOT NULL DEFAULT 0;'); } catch (_) {}
-      try { await db.execute('ALTER TABLE sale_items ADD COLUMN subtotal REAL NOT NULL DEFAULT 0;'); } catch (_) {}
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at);');
-    }
-    if (oldVersion < 3) {
-      try { await db.execute('ALTER TABLE products ADD COLUMN cost_price REAL NOT NULL DEFAULT 0;'); } catch (_) {}
-      try { await db.execute('ALTER TABLE products ADD COLUMN sale_price REAL NOT NULL DEFAULT 0;'); } catch (_) {}
-      try { await db.execute('ALTER TABLE sales ADD COLUMN profit REAL NOT NULL DEFAULT 0;'); } catch (_) {}
-      try { await db.execute('ALTER TABLE sale_items ADD COLUMN cost_at_sale REAL NOT NULL DEFAULT 0;'); } catch (_) {}
-    }
   }
 }

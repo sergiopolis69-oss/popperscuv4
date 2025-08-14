@@ -12,14 +12,40 @@ class SaleRepository {
       Map<String, Object?> sale, List<Map<String, Object?>> items) async {
     final db = await _db;
 
+    // 1) Precarga de costos por productId si el item no envía 'cost'
+    final ids = items
+        .map((it) => it['productId']?.toString())
+        .where((s) => s != null && s!.isNotEmpty)
+        .cast<String>()
+        .toSet();
+
+    final costByProductId = <String, double>{};
+    if (ids.isNotEmpty) {
+      final placeholders = List.filled(ids.length, '?').join(',');
+      final rows = await db.rawQuery(
+        'SELECT id, cost FROM products WHERE id IN ($placeholders)',
+        ids.toList(),
+      );
+      for (final r in rows) {
+        costByProductId[r['id'] as String] =
+            (r['cost'] as num?)?.toDouble() ?? 0.0;
+      }
+    }
+
     double subtotal = 0;
     double itemsProfit = 0;
 
     final preparedItems = items.map<Map<String, Object?>>((it) {
       final qty = (it['quantity'] as num).toInt();
       final price = (it['price'] as num).toDouble();
-      final cost = (it['cost'] as num?)?.toDouble() ?? 0.0;
       final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
+
+      // Si no viene 'cost', usamos el de products
+      double cost =
+          (it['cost'] as num?)?.toDouble() ??
+          (it['productId'] != null
+              ? (costByProductId[it['productId']!.toString()] ?? 0.0)
+              : 0.0);
 
       final sub = (price * qty) - lineDiscount;
       final prof = (price - cost) * qty - lineDiscount;

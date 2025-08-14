@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data'; // <-- necesario para Uint8List
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-import 'package:popperscuv/db/db.dart';
-import 'package:popperscuv/repositories/product_repository.dart';
+import '../db/db.dart';
+import '../repositories/product_repository.dart';
 
 class CsvIO {
   // ----- EXPORT -----
@@ -29,14 +30,12 @@ class CsvIO {
     return path;
   }
 
-  // Compatibilidad con páginas antiguas
   static Future<String> exportTableLocal(String table) => exportTable(table);
   static Future<String> exportTableToDownloads(String table) => exportTable(table);
 
-  // ----- IMPORT (abre selector de archivos) -----
+  // ----- IMPORTS -----
 
-  /// Importa un CSV con columnas mínimas para **AJUSTES** de inventario.
-  /// Columnas aceptadas: (id o sku), delta, note(opcional)
+  /// Ajustes de inventario: columnas (id o sku), delta, note(opcional)
   static Future<int> importInventoryAddsFromCsv() async {
     final bytes = await _pickCsvBytes();
     if (bytes == null) return 0;
@@ -57,7 +56,6 @@ class CsvIO {
         final sku = _cell(r, idx('sku'));
         final delta = _num(_cell(r, idx('delta')), 0).toInt();
         final note = _cell(r, idx('note')) ?? 'csv import';
-
         if (delta == 0) continue;
 
         String? productId = id;
@@ -90,7 +88,7 @@ class CsvIO {
     return count;
   }
 
-  /// Importa/actualiza productos (upsert). Columnas: id,name,sku,category,price,cost,stock
+  /// Upsert de productos. Columnas: id,name,sku,category,price,cost,stock
   static Future<int> importProductsUpsertFromCsv() async {
     final bytes = await _pickCsvBytes();
     if (bytes == null) return 0;
@@ -98,10 +96,10 @@ class CsvIO {
     return importProductsFromCsvString(csv);
   }
 
-  /// Alias por compatibilidad (mismo comportamiento: upsert).
+  /// Alias de compatibilidad: mismo comportamiento (upsert).
   static Future<int> importProductsFromCsv() => importProductsUpsertFromCsv();
 
-  // ---- Helpers compartidos ----
+  // ---- Helpers ----
   static Future<int> importProductsFromCsvString(String csv) async {
     final rows = const CsvToListConverter(eol: '\n').convert(csv, shouldParseNumbers: false);
     if (rows.isEmpty) return 0;

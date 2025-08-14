@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:popperscuv/db/db.dart'; // <— usa import por paquete
+import 'package:popperscuv/db/db.dart';
 
 class ProductRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
@@ -7,7 +7,7 @@ class ProductRepository {
   Future<List<Map<String, Object?>>> all() async {
     final db = await _db;
     return db.query('products', orderBy: 'updated_at DESC, name ASC');
-  }
+    }
 
   Future<List<Map<String, Object?>>> searchByNameOrSku(String q) async {
     final db = await _db;
@@ -49,7 +49,7 @@ class ProductRepository {
     await db.insert('products', row, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  // Wrapper compatible con la UI (argumentos con nombre)
+  // Firma que llama tu UI
   Future<void> upsertProductNamed({
     String? id,
     required String name,

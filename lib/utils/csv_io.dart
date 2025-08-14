@@ -6,8 +6,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-import '../db/db.dart';
-import '../repositories/product_repository.dart';
+import 'package:popperscuv/db/db.dart';
+import 'package:popperscuv/repositories/product_repository.dart';
 
 class CsvIO {
   // ===== EXPORT =====
@@ -151,5 +151,5 @@ class CsvIO {
   static num _num(String? s, num fallback) {
     if (s == null) return fallback;
     return num.tryParse(s.trim().replaceAll(',', '')) ?? fallback;
-    }
+  }
 }

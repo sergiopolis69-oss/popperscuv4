@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data'; // <-- necesario para Uint8List
+import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
@@ -10,11 +10,12 @@ import '../db/db.dart';
 import '../repositories/product_repository.dart';
 
 class CsvIO {
-  // ----- EXPORT -----
+  // ===== EXPORT =====
   static Future<String> exportTable(String table) async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(table);
-    final headers = rows.isNotEmpty ? rows.first.keys.toList() : <String>[];
+    final headers =
+        rows.isNotEmpty ? rows.first.keys.toList() : <String>[];
     final data = <List<dynamic>>[
       headers,
       ...rows.map((m) => headers.map((h) => m[h]).toList()),
@@ -24,33 +25,36 @@ class CsvIO {
     final dir = await getDatabasesPath();
     final outDir = p.join(dir, 'exports');
     await Directory(outDir).create(recursive: true);
-    final path = p.join(outDir, '${table}_${DateTime.now().millisecondsSinceEpoch}.csv');
+    final path = p.join(
+        outDir, '${table}_${DateTime.now().millisecondsSinceEpoch}.csv');
     final file = File(path);
     await file.writeAsString(csv);
     return path;
   }
 
   static Future<String> exportTableLocal(String table) => exportTable(table);
-  static Future<String> exportTableToDownloads(String table) => exportTable(table);
+  static Future<String> exportTableToDownloads(String table) =>
+      exportTable(table);
 
-  // ----- IMPORTS -----
+  // ===== IMPORTS =====
 
-  /// Ajustes de inventario: columnas (id o sku), delta, note(opcional)
+  /// Ajuste de inventarios: columnas (id o sku), delta, note(opcional)
   static Future<int> importInventoryAddsFromCsv() async {
     final bytes = await _pickCsvBytes();
     if (bytes == null) return 0;
     final csv = utf8.decode(bytes);
-    final rows = const CsvToListConverter(eol: '\n').convert(csv, shouldParseNumbers: false);
+    final rows = const CsvToListConverter(eol: '\n')
+        .convert(csv, shouldParseNumbers: false);
     if (rows.isEmpty) return 0;
 
     final headers = rows.first.map((e) => e.toString()).toList();
-    final idx = (String k) => headers.indexOf(k);
+    int idx(String k) => headers.indexOf(k);
 
     final db = await AppDatabase.instance.database;
     int count = 0;
 
     await db.transaction((txn) async {
-      for (int i = 1; i < rows.length; i++) {
+      for (var i = 1; i < rows.length; i++) {
         final r = rows[i];
         final id = _cell(r, idx('id'));
         final sku = _cell(r, idx('sku'));
@@ -59,13 +63,17 @@ class CsvIO {
         if (delta == 0) continue;
 
         String? productId = id;
-        if ((productId == null || productId.isEmpty) && sku != null && sku.isNotEmpty) {
-          final found = await txn.query('products', where: 'sku = ?', whereArgs: [sku], limit: 1);
+        if ((productId == null || productId.isEmpty) &&
+            sku != null &&
+            sku.isNotEmpty) {
+          final found = await txn.query('products',
+              where: 'sku = ?', whereArgs: [sku], limit: 1);
           if (found.isNotEmpty) productId = found.first['id'] as String?;
         }
         if (productId == null || productId.isEmpty) continue;
 
-        final cur = await txn.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
+        final cur = await txn.query('products',
+            where: 'id = ?', whereArgs: [productId], limit: 1);
         if (cur.isEmpty) continue;
 
         final current = (cur.first['stock'] as int);
@@ -96,20 +104,21 @@ class CsvIO {
     return importProductsFromCsvString(csv);
   }
 
-  /// Alias de compatibilidad: mismo comportamiento (upsert).
+  /// Compatibilidad: igual a upsert.
   static Future<int> importProductsFromCsv() => importProductsUpsertFromCsv();
 
-  // ---- Helpers ----
+  // ---- Helpers
   static Future<int> importProductsFromCsvString(String csv) async {
-    final rows = const CsvToListConverter(eol: '\n').convert(csv, shouldParseNumbers: false);
+    final rows = const CsvToListConverter(eol: '\n')
+        .convert(csv, shouldParseNumbers: false);
     if (rows.isEmpty) return 0;
     final headers = rows.first.map((e) => e.toString()).toList();
-    final idx = (String k) => headers.indexOf(k);
+    int idx(String k) => headers.indexOf(k);
 
     final repo = ProductRepository();
     int count = 0;
 
-    for (int i = 1; i < rows.length; i++) {
+    for (var i = 1; i < rows.length; i++) {
       final r = rows[i];
       await repo.upsertProduct({
         'id': _cell(r, idx('id')),
@@ -137,10 +146,10 @@ class CsvIO {
   }
 
   static String? _cell(List row, int index) =>
-      (index >= 0 && index < row.length) ? (row[index]?.toString()) : null;
+      (index >= 0 && index < row.length) ? row[index]?.toString() : null;
 
   static num _num(String? s, num fallback) {
     if (s == null) return fallback;
     return num.tryParse(s.trim().replaceAll(',', '')) ?? fallback;
-  }
+    }
 }

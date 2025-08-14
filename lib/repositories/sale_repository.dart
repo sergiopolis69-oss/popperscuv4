@@ -1,20 +1,17 @@
 import 'package:sqflite/sqflite.dart';
-import '../db/db.dart';
+import 'package:popperscuv/db/db.dart';
 
 class SaleRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
 
-  /// Wrapper por compatibilidad: algunas UIs llaman `save(...)`
+  // Compatibilidad: algunos lugares llaman save()
   Future<String> save(Map<String, Object?> sale, List<Map<String, Object?>> items) {
     return create(sale, items);
   }
 
-  /// Crea venta + renglones, ajusta inventario y calcula utilidades.
-  /// - `shipping_cost` NO afecta utilidad (sólo el total).
   Future<String> create(Map<String, Object?> sale, List<Map<String, Object?>> items) async {
     final db = await _db;
 
-    // Cálculos de renglón
     double subtotal = 0;
     double itemsProfit = 0;
 
@@ -46,10 +43,7 @@ class SaleRepository {
 
     final discount = (sale['discount'] as num?)?.toDouble() ?? 0.0;
     final shipping = (sale['shippingCost'] as num?)?.toDouble() ?? 0.0;
-
-    // La utilidad se reduce por el descuento; envío no afecta
     final profit = itemsProfit - discount;
-
     final total = (sale['total'] as num?)?.toDouble() ?? (subtotal - discount + shipping);
 
     final saleId = sale['id']?.toString() ?? genId();
@@ -70,9 +64,8 @@ class SaleRepository {
       });
 
       for (final it in preparedItems) {
-        final itemId = it['id']!.toString();
         await txn.insert('sale_items', {
-          'id': itemId,
+          'id': it['id'],
           'sale_id': saleId,
           'product_id': it['product_id'],
           'name': it['name'],
@@ -87,14 +80,12 @@ class SaleRepository {
 
         final productId = it['product_id']?.toString();
         if (productId != null && productId.isNotEmpty) {
-          // reduce stock
           final cur = await txn.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
           if (cur.isNotEmpty) {
             final current = (cur.first['stock'] as int);
             final newStock = current - (it['quantity'] as int);
             await txn.update('products', {'stock': newStock, 'updated_at': nowIso()},
                 where: 'id = ?', whereArgs: [productId]);
-
             await txn.insert('inventory_movements', {
               'id': genId(),
               'product_id': productId,
@@ -110,7 +101,6 @@ class SaleRepository {
     return saleId;
   }
 
-  /// Historial (con filtro opcional por cliente y rango)
   Future<List<Map<String, Object?>>> history({
     String? customerId,
     DateTime? from,
@@ -130,18 +120,15 @@ class SaleRepository {
       args.add(to.toIso8601String());
     }
 
-    final rows = await db.rawQuery('''
+    return db.rawQuery('''
       SELECT s.*, c.name AS customer_name
       FROM sales s
       LEFT JOIN customers c ON c.id = s.customer_id
       ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
       ORDER BY s.created_at DESC
     ''', args);
-
-    return rows;
   }
 
-  /// Top clientes en rango (usa columnas snake_case)
   Future<List<Map<String, Object?>>> topCustomers(DateTime from, DateTime to) async {
     final db = await _db;
     return db.rawQuery('''
@@ -159,7 +146,6 @@ class SaleRepository {
     ''', [from.toIso8601String(), to.toIso8601String()]);
   }
 
-  /// Resumen de utilidades del rango
   Future<Map<String, Object?>> summary(DateTime from, DateTime to) async {
     final db = await _db;
     final rows = await db.rawQuery('''
@@ -177,9 +163,7 @@ class SaleRepository {
     final profit = (m['profit'] as num?)?.toDouble() ?? 0.0;
     final discount = (m['discount'] as num?)?.toDouble() ?? 0.0;
     final shipping = (m['shipping_cost'] as num?)?.toDouble() ?? 0.0;
-
     final pct = total > 0 ? (profit / total) * 100.0 : 0.0;
-
     return {
       'total': total,
       'discount': discount,

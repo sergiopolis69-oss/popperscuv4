@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:popperscuv/db/db.dart';
+import '../db/db.dart';
 
 class CustomerRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
@@ -34,6 +34,29 @@ class CustomerRepository {
       'notes': data['notes'],
       'updated_at': now,
       'created_at': data['created_at'] ?? now,
+    };
+    await db.insert('customers', row, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> upsertCustomerNamed({
+    String? id,
+    required String name,
+    String? phone,
+    String? notes,
+  }) async {
+    await upsertCustomer({
+      'id': id ?? phone,
+      'name': name,
+      'phone': phone,
+      'notes': notes,
+    });
+  }
+
+  Future<void> deleteById(String id) async {
+    final db = await _db;
+    await db.delete('customers', where: 'id = ?', whereArgs: [id]);
+  }
+}
     };
     await db.insert('customers', row, conflictAlgorithm: ConflictAlgorithm.replace);
   }

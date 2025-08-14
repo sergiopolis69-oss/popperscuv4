@@ -1,12 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-import 'package:popperscuv/db/db.dart';
+import 'package:popperscuv/db/app_database.dart';
 import 'package:popperscuv/repositories/product_repository.dart';
 
 class CsvIO {
@@ -14,8 +15,7 @@ class CsvIO {
   static Future<String> exportTable(String table) async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(table);
-    final headers =
-        rows.isNotEmpty ? rows.first.keys.toList() : <String>[];
+    final headers = rows.isNotEmpty ? rows.first.keys.toList() : <String>[];
     final data = <List<dynamic>>[
       headers,
       ...rows.map((m) => headers.map((h) => m[h]).toList()),
@@ -25,10 +25,9 @@ class CsvIO {
     final dir = await getDatabasesPath();
     final outDir = p.join(dir, 'exports');
     await Directory(outDir).create(recursive: true);
-    final path = p.join(
-        outDir, '${table}_${DateTime.now().millisecondsSinceEpoch}.csv');
-    final file = File(path);
-    await file.writeAsString(csv);
+    final path =
+        p.join(outDir, '${table}_${DateTime.now().millisecondsSinceEpoch}.csv');
+    await File(path).writeAsString(csv);
     return path;
   }
 

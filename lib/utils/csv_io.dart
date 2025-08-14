@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'package:popperscuv/db/app_database.dart';
@@ -22,18 +23,36 @@ class CsvIO {
     ];
     final csv = const ListToCsvConverter().convert(data);
 
-    final dir = await getDatabasesPath();
-    final outDir = p.join(dir, 'exports');
-    await Directory(outDir).create(recursive: true);
+    final dir = await _exportsDir();
     final path =
-        p.join(outDir, '${table}_${DateTime.now().millisecondsSinceEpoch}.csv');
+        p.join(dir.path, '${table}_${DateTime.now().millisecondsSinceEpoch}.csv');
     await File(path).writeAsString(csv);
+
+    // Para que se vea fácil en log y en tu UI
+    // (tu ReportsPage ya muestra el path devuelto)
+    // ignore: avoid_print
+    print('CSV exportado: $path');
     return path;
   }
 
   static Future<String> exportTableLocal(String table) => exportTable(table);
   static Future<String> exportTableToDownloads(String table) =>
       exportTable(table);
+
+  /// Ruta del directorio de exportaciones realmente usado.
+  static Future<String> whereAreExports() async => (await _exportsDir()).path;
+
+  /// Lista completa de archivos exportados (rutas absolutas), recientes primero.
+  static Future<List<String>> listExportedFiles() async {
+    final d = await _exportsDir();
+    final files = d
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.toLowerCase().endsWith('.csv'))
+        .toList()
+      ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+    return files.map((f) => f.path).toList();
+  }
 
   // ===== IMPORTS =====
 
@@ -151,4 +170,18 @@ class CsvIO {
     if (s == null) return fallback;
     return num.tryParse(s.trim().replaceAll(',', '')) ?? fallback;
   }
+
+  // Directorio de exportaciones: externo de la app, con fallback interno.
+  static Future<Directory> _exportsDir() async {
+    final ext = await getExternalStorageDirectory(); // Android: .../Android/data/<pkg>/files
+    if (ext != null) {
+      final d = Directory(p.join(ext.path, 'exports'));
+      await d.create(recursive: true);
+      return d;
+    }
+    final dbDir = await getDatabasesPath();
+    final d = Directory(p.join(dbDir, 'exports'));
+    await d.create(recursive: true);
+    return d;
+    }
 }

@@ -1,221 +1,172 @@
-
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../repositories/product_repository.dart';
+import 'package:popperscuv/repositories/product_repository.dart';
 
-class ProductsPage extends ConsumerStatefulWidget {
+class ProductsPage extends StatefulWidget {
   const ProductsPage({super.key});
 
   @override
-  ConsumerState<ProductsPage> createState() => _ProductsPageState();
+  State<ProductsPage> createState() => _ProductsPageState();
 }
 
-class _ProductsPageState extends ConsumerState<ProductsPage> {
-  final _nameCtrl = TextEditingController();
-  final _skuCtrl = TextEditingController();
-  final _costCtrl = TextEditingController();
-  final _priceCtrl = TextEditingController();
-  final _stockCtrl = TextEditingController(text: '0');
+class _ProductsPageState extends State<ProductsPage> {
+  final _searchCtrl = TextEditingController();
+  String _searchText = '';
+  String _selectedCategory = ''; // '' = Todas
+  List<String> _categories = [];
 
-  String? _selectedCategory;
-  Map<String, Object?>? _edit;
-
-  Future<void> _loadForEdit(Map<String, Object?> row) async {
-    _edit = row;
-    _nameCtrl.text = (row['name'] ?? '') as String;
-    _skuCtrl.text = (row['sku'] ?? '') as String;
-    _costCtrl.text = ((row['cost'] as num?)?.toString() ?? '0');
-    _priceCtrl.text = ((row['price'] as num?)?.toString() ?? '0');
-    _stockCtrl.text = ((row['stock'] as num?)?.toString() ?? '0');
-    _selectedCategory = (row['category'] as String?);
-    if (mounted) setState(() {});
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+    _searchCtrl.addListener(() {
+      setState(() => _searchText = _searchCtrl.text.trim());
+    });
   }
 
-  Future<void> _save() async {
-    final repo = ProductRepository();
-    await repo.upsertProductNamed(
-      id: _edit?['id'] as String?,
-      name: _nameCtrl.text.trim(),
-      sku: (() {
-        final s = _skuCtrl.text.trim();
-        return s.isEmpty ? null : s;
-      })(),
-      category: (() {
-        final c = _selectedCategory?.trim() ?? '';
-        return c.isEmpty ? null : c;
-      })(),
-      cost: double.tryParse(_costCtrl.text) ?? 0.0,
-      price: double.tryParse(_priceCtrl.text) ?? 0.0,
-      stock: int.tryParse(_stockCtrl.text) ?? 0,
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final list = await ProductRepository().categoriesDistinct();
+      setState(() {
+        _categories = list;
+      });
+    } catch (_) {
+      // opcional: mostrar error
+    }
+  }
+
+  Future<List<Map<String, Object?>>> _load() {
+    return ProductRepository().listFiltered(
+      q: _searchText.isEmpty ? null : _searchText,
+      category: _selectedCategory.isEmpty ? null : _selectedCategory,
     );
-    if (!mounted) return;
-    Navigator.pop(context);
-    setState(() {});
-  }
-
-  Future<void> _delete(String id) async {
-    await ProductRepository().deleteById(id);
-    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Productos')),
-      body: FutureBuilder<List<Map<String, Object?>>>(
-        future: ProductRepository().all(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final rows = snapshot.data ?? const <Map<String, Object?>>[];
-          if (rows.isEmpty) {
-            return const Center(child: Text('Sin productos. Usa el botón + para agregar.'));
-          }
-          return ListView.separated(
-            itemCount: rows.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, i) {
-              final p = rows[i];
-              final name = (p['name'] ?? '') as String;
-              final sku = (p['sku'] ?? '-') as String;
-              final stock = (p['stock'] ?? 0).toString();
-              final cost = ((p['cost'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
-              final price = ((p['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
-              return ListTile(
-                title: Text(name),
-                subtitle: Text('SKU: $sku  |  Stock: $stock  |  Compra: $cost  |  Venta: $price'),
-                onTap: () async {
-                  await _loadForEdit(p);
-                  if (!mounted) return;
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    builder: (_) => _EditorSheet(
-                      nameCtrl: _nameCtrl,
-                      skuCtrl: _skuCtrl,
-                      costCtrl: _costCtrl,
-                      priceCtrl: _priceCtrl,
-                      stockCtrl: _stockCtrl,
-                      selectedCategory: _selectedCategory,
-                      onCategoryChanged: (v) => setState(() => _selectedCategory = v),
-                      onSave: _save,
+      appBar: AppBar(
+        title: const Text('Inventario'),
+        actions: [
+          IconButton(
+            tooltip: 'Refrescar',
+            onPressed: () => setState(() {}),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Buscar (nombre o SKU)',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                      isDense: true,
                     ),
-                  );
-                },
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => _delete((p['id'] ?? '') as String),
+                  ),
                 ),
-              );
-            },
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          _edit = null;
-          _nameCtrl.clear();
-          _skuCtrl.clear();
-          _costCtrl.text = '0';
-          _priceCtrl.text = '0';
-          _stockCtrl.text = '0';
-          _selectedCategory = null;
-          showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            builder: (_) => _EditorSheet(
-              nameCtrl: _nameCtrl,
-              skuCtrl: _skuCtrl,
-              costCtrl: _costCtrl,
-              priceCtrl: _priceCtrl,
-              stockCtrl: _stockCtrl,
-              selectedCategory: _selectedCategory,
-              onCategoryChanged: (v) => setState(() => _selectedCategory = v),
-              onSave: _save,
+                const SizedBox(width: 8),
+                DropdownButtonHideUnderline(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: DropdownButton<String>(
+                      value: _selectedCategory,
+                      items: <DropdownMenuItem<String>>[
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('Todas'),
+                        ),
+                        ..._categories.map(
+                          (c) => DropdownMenuItem(
+                            value: c,
+                            child: Text(c),
+                          ),
+                        ),
+                      ],
+                      onChanged: (v) => setState(() {
+                        _selectedCategory = v ?? '';
+                      }),
+                      hint: const Text('Categoría'),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          );
-        },
-        label: const Text('Agregar'),
-        icon: const Icon(Icons.add),
-      ),
-    );
-  }
-}
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: FutureBuilder<List<Map<String, Object?>>>(
+              future: _load(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text('Error: ${snapshot.error}'),
+                  );
+                }
+                final rows = snapshot.data ?? const <Map<String, Object?>>[];
 
-class _EditorSheet extends StatelessWidget {
-  final TextEditingController nameCtrl;
-  final TextEditingController skuCtrl;
-  final TextEditingController costCtrl;
-  final TextEditingController priceCtrl;
-  final TextEditingController stockCtrl;
-  final String? selectedCategory;
-  final ValueChanged<String?> onCategoryChanged;
-  final VoidCallback onSave;
+                if (rows.isEmpty) {
+                  return const Center(child: Text('Sin resultados'));
+                }
 
-  const _EditorSheet({
-    required this.nameCtrl,
-    required this.skuCtrl,
-    required this.costCtrl,
-    required this.priceCtrl,
-    required this.stockCtrl,
-    required this.selectedCategory,
-    required this.onCategoryChanged,
-    required this.onSave,
-  });
+                return ListView.separated(
+                  itemCount: rows.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final r = rows[i];
+                    final name = (r['name'] ?? '').toString();
+                    final sku = (r['sku'] ?? '').toString();
+                    final category = (r['category'] ?? '').toString();
+                    final price = (r['price'] as num?)?.toDouble() ?? 0.0;
+                    final cost = (r['cost'] as num?)?.toDouble() ?? 0.0;
+                    final stock = (r['stock'] is int)
+                        ? (r['stock'] as int)
+                        : int.tryParse(r['stock']?.toString() ?? '') ?? 0;
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
-            TextField(controller: skuCtrl, decoration: const InputDecoration(labelText: 'SKU')),
-            TextField(controller: costCtrl, decoration: const InputDecoration(labelText: 'Costo'), keyboardType: TextInputType.number),
-            TextField(controller: priceCtrl, decoration: const InputDecoration(labelText: 'Precio'), keyboardType: TextInputType.number),
-            TextField(controller: stockCtrl, decoration: const InputDecoration(labelText: 'Stock'), keyboardType: TextInputType.number),
-            const SizedBox(height: 12),
-            FutureBuilder<List<String>>(
-              future: ProductRepository().categoriesDistinct(),
-              builder: (context, snap) {
-                final list = snap.data ?? const <String>[];
-                return Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        isExpanded: true,
-                        value: (selectedCategory != null && (selectedCategory!.isNotEmpty) && list.contains(selectedCategory))
-                            ? selectedCategory
-                            : null,
-                        items: list.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                        onChanged: onCategoryChanged,
-                        decoration: const InputDecoration(labelText: 'Categoría (existente)'),
+                    return ListTile(
+                      title: Text(
+                        name.isEmpty ? '(Sin nombre)' : name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        initialValue: selectedCategory ?? '',
-                        onChanged: onCategoryChanged,
-                        decoration: const InputDecoration(labelText: 'Nueva categoría'),
+                      subtitle: Text(
+                        [
+                          if (sku.isNotEmpty) 'SKU: $sku',
+                          if (category.isNotEmpty) 'Cat: $category',
+                          'Costo: \$${cost.toStringAsFixed(2)}',
+                          'Precio: \$${price.toStringAsFixed(2)}',
+                        ].join('  ·  '),
                       ),
-                    ),
-                  ],
+                      trailing: Text(
+                        'Stock: $stock',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    );
+                  },
                 );
               },
             ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(onPressed: onSave, child: const Text('Guardar')),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

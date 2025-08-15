@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:popperscuv/db/app_database.dart';
+import 'package:popperscuv/utils/db.dart';
+import 'package:popperscuv/utils/helpers.dart';
 
 class CustomerRepository {
   Future<Database> get _db async => AppDatabase.instance.database;

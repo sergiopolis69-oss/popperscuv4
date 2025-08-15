@@ -1,11 +1,14 @@
+// lib/repositories/product_repository.dart
+import 'dart:math';
 import 'package:sqflite/sqflite.dart';
+import '../utils/db.dart'; // Asegúrate que existe lib/utils/db.dart y define AppDatabase
 
-// OJO: ajusta el import según tu nombre de paquete/proyecto.
-// Si tu utils está en otro path, cámbialo aquí.
-import 'package:popperscuv/utils/db.dart';
+// Helpers locales (por si tu db.dart no los expone)
+String nowIso() => DateTime.now().toIso8601String();
+String genId() => '${DateTime.now().microsecondsSinceEpoch}${Random().nextInt(100000)}';
 
 class ProductRepository {
-  // Acceso a la BD (usa tu AppDatabase de utils/db.dart)
+  // Acceso a la BD usando tu singleton en utils/db.dart
   Future<Database> get _db async => AppDatabase.instance.database;
 
   /// Lista todos los productos
@@ -44,21 +47,19 @@ class ProductRepository {
 
   /// Inserta o actualiza un producto
   ///
-  /// Campos esperados en [data]:
-  /// id (opcional), name, sku, category, price, cost, stock
+  /// Campos esperados en [data]: id?, name, sku, category, price, cost, stock
   Future<String> upsertProduct(Map<String, Object?> data) async {
     final db = await _db;
 
-    // id: si viene, se respeta; si no, generamos uno
     final providedId = data['id']?.toString();
     final id = (providedId != null && providedId.isNotEmpty) ? providedId : genId();
 
-    // Timestamps
     final now = nowIso();
 
-    // Normalizamos tipos numéricos
-    double? _toDouble(Object? v) => v == null ? null : (v is num ? v.toDouble() : double.tryParse(v.toString()));
-    int? _toInt(Object? v) => v == null ? null : (v is num ? v.toInt() : int.tryParse(v.toString()));
+    double? _toDouble(Object? v) =>
+        v == null ? null : (v is num ? v.toDouble() : double.tryParse(v.toString()));
+    int? _toInt(Object? v) =>
+        v == null ? null : (v is num ? v.toInt() : int.tryParse(v.toString()));
 
     final row = <String, Object?>{
       'id': id,
@@ -68,9 +69,7 @@ class ProductRepository {
       'price': _toDouble(data['price']) ?? 0.0,
       'cost': _toDouble(data['cost']) ?? 0.0,
       'stock': _toInt(data['stock']) ?? 0,
-      // created_at solo si no existía
       'created_at': data['created_at'] ?? now,
-      // updated_at siempre se toca en upsert
       'updated_at': now,
     };
 
@@ -95,13 +94,16 @@ class ProductRepository {
     final rows = await db.rawQuery(
       "SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND TRIM(category) <> '' ORDER BY LOWER(category) ASC",
     );
-    return rows.map((m) => (m['category'] ?? '').toString()).where((c) => c.trim().isNotEmpty).toList();
+    return rows
+        .map((m) => (m['category'] ?? '').toString())
+        .where((c) => c.trim().isNotEmpty)
+        .toList();
   }
 
   /// Ajusta stock e inserta movimiento de inventario
   ///
   /// [delta]: cantidad a sumar (puede ser negativa).
-  /// [reason]: motivo del movimiento (ej. 'csv import', 'venta', 'ajuste manual', etc.)
+  /// [reason]: motivo (ej. 'csv import', 'venta', 'ajuste manual').
   /// Si provees [txn], opera dentro de esa transacción; si no, crea una nueva.
   Future<void> adjustStock(
     String productId,
@@ -110,12 +112,10 @@ class ProductRepository {
     Transaction? txn,
   }) async {
     final run = (Transaction t) async {
-      // Lee stock actual
       final cur = await t.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
       final currentStock = cur.isNotEmpty ? (cur.first['stock'] as int? ?? 0) : 0;
       final newStock = currentStock + delta;
 
-      // Actualiza producto
       await t.update(
         'products',
         {'stock': newStock, 'updated_at': nowIso()},
@@ -123,7 +123,6 @@ class ProductRepository {
         whereArgs: [productId],
       );
 
-      // Inserta movimiento
       await t.insert('inventory_movements', {
         'id': genId(),
         'product_id': productId,

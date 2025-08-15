@@ -1,97 +1,143 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:popperscuv/db/app_database.dart';
+
+// OJO: ajusta el import según tu nombre de paquete/proyecto.
+// Si tu utils está en otro path, cámbialo aquí.
+import 'package:popperscuv/utils/db.dart';
 
 class ProductRepository {
+  // Acceso a la BD (usa tu AppDatabase de utils/db.dart)
   Future<Database> get _db async => AppDatabase.instance.database;
 
-  Future<List<Map<String, Object?>>> all() async {
+  /// Lista todos los productos
+  Future<List<Map<String, Object?>>> all({String orderBy = 'LOWER(name) ASC'}) async {
     final db = await _db;
-    return db.query('products', orderBy: 'updated_at DESC, name ASC');
+    return db.query('products', orderBy: orderBy);
   }
 
-  Future<List<Map<String, Object?>>> searchByNameOrSku(String q) async {
+  /// Lista filtrada por texto (nombre o SKU) y/o categoría
+  Future<List<Map<String, Object?>>> listFiltered({
+    String? q,
+    String? category,
+  }) async {
     final db = await _db;
-    final like = '%${q.trim()}%';
+    final where = <String>[];
+    final args = <Object?>[];
+
+    if (q != null && q.trim().isNotEmpty) {
+      final like = '%${q.trim()}%';
+      where.add('(LOWER(name) LIKE LOWER(?) OR LOWER(sku) LIKE LOWER(?))');
+      args.addAll([like, like]);
+    }
+
+    if (category != null && category.trim().isNotEmpty) {
+      where.add('category = ?');
+      args.add(category.trim());
+    }
+
     return db.query(
       'products',
-      where: 'name LIKE ? OR sku LIKE ?',
-      whereArgs: [like, like],
-      orderBy: 'name ASC',
-      limit: 50,
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'LOWER(name) ASC',
     );
   }
 
+  /// Inserta o actualiza un producto
+  ///
+  /// Campos esperados en [data]:
+  /// id (opcional), name, sku, category, price, cost, stock
+  Future<String> upsertProduct(Map<String, Object?> data) async {
+    final db = await _db;
+
+    // id: si viene, se respeta; si no, generamos uno
+    final providedId = data['id']?.toString();
+    final id = (providedId != null && providedId.isNotEmpty) ? providedId : genId();
+
+    // Timestamps
+    final now = nowIso();
+
+    // Normalizamos tipos numéricos
+    double? _toDouble(Object? v) => v == null ? null : (v is num ? v.toDouble() : double.tryParse(v.toString()));
+    int? _toInt(Object? v) => v == null ? null : (v is num ? v.toInt() : int.tryParse(v.toString()));
+
+    final row = <String, Object?>{
+      'id': id,
+      'name': data['name']?.toString().trim(),
+      'sku': data['sku']?.toString().trim(),
+      'category': data['category']?.toString().trim(),
+      'price': _toDouble(data['price']) ?? 0.0,
+      'cost': _toDouble(data['cost']) ?? 0.0,
+      'stock': _toInt(data['stock']) ?? 0,
+      // created_at solo si no existía
+      'created_at': data['created_at'] ?? now,
+      // updated_at siempre se toca en upsert
+      'updated_at': now,
+    };
+
+    await db.insert(
+      'products',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    return id;
+  }
+
+  /// Borra producto por id
+  Future<int> deleteById(String id) async {
+    final db = await _db;
+    return db.delete('products', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Devuelve categorías distintas (no nulas ni vacías)
   Future<List<String>> categoriesDistinct() async {
     final db = await _db;
-    final rows = await db.rawQuery('''
-      SELECT DISTINCT category FROM products
-      WHERE category IS NOT NULL AND TRIM(category) <> ''
-      ORDER BY category COLLATE NOCASE
-    ''');
-    return rows.map((e) => (e['category'] as String)).toList();
+    final rows = await db.rawQuery(
+      "SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND TRIM(category) <> '' ORDER BY LOWER(category) ASC",
+    );
+    return rows.map((m) => (m['category'] ?? '').toString()).where((c) => c.trim().isNotEmpty).toList();
   }
 
-  Future<void> upsertProduct(Map<String, Object?> data) async {
-    final db = await _db;
-    final id = (data['id']?.toString() ?? genId());
-    final now = nowIso();
-    final row = {
-      'id': id,
-      'name': data['name'],
-      'sku': data['sku'],
-      'category': data['category'],
-      'price': (data['price'] as num).toDouble(),
-      'cost': (data['cost'] as num).toDouble(),
-      'stock': (data['stock'] as num).toInt(),
-      'updated_at': now,
-      'created_at': data['created_at'] ?? now,
-    };
-    await db.insert('products', row,
-        conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  Future<void> upsertProductNamed({
-    String? id,
-    required String name,
-    String? sku,
-    String? category,
-    required double price,
-    required double cost,
-    required int stock,
+  /// Ajusta stock e inserta movimiento de inventario
+  ///
+  /// [delta]: cantidad a sumar (puede ser negativa).
+  /// [reason]: motivo del movimiento (ej. 'csv import', 'venta', 'ajuste manual', etc.)
+  /// Si provees [txn], opera dentro de esa transacción; si no, crea una nueva.
+  Future<void> adjustStock(
+    String productId,
+    int delta, {
+    String? reason,
+    Transaction? txn,
   }) async {
-    await upsertProduct({
-      'id': id,
-      'name': name,
-      'sku': sku,
-      'category': category,
-      'price': price,
-      'cost': cost,
-      'stock': stock,
-    });
-  }
+    final run = (Transaction t) async {
+      // Lee stock actual
+      final cur = await t.query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
+      final currentStock = cur.isNotEmpty ? (cur.first['stock'] as int? ?? 0) : 0;
+      final newStock = currentStock + delta;
 
-  Future<void> deleteById(String id) async {
-    final db = await _db;
-    await db.delete('products', where: 'id = ?', whereArgs: [id]);
-  }
+      // Actualiza producto
+      await t.update(
+        'products',
+        {'stock': newStock, 'updated_at': nowIso()},
+        where: 'id = ?',
+        whereArgs: [productId],
+      );
 
-  Future<void> adjustStock(String productId, int delta, {String? note}) async {
-    final db = await _db;
-    await db.transaction((txn) async {
-      final cur = await txn
-          .query('products', where: 'id = ?', whereArgs: [productId], limit: 1);
-      if (cur.isEmpty) return;
-      final current = (cur.first['stock'] as int);
-      final newStock = current + delta;
-      await txn.update('products', {'stock': newStock, 'updated_at': nowIso()},
-          where: 'id = ?', whereArgs: [productId]);
-      await txn.insert('inventory_movements', {
+      // Inserta movimiento
+      await t.insert('inventory_movements', {
         'id': genId(),
         'product_id': productId,
         'delta': delta,
-        'note': note ?? 'ajuste',
+        'reason': (reason ?? 'ajuste').toString(),
         'created_at': nowIso(),
       });
-    });
+    };
+
+    if (txn != null) {
+      await run(txn);
+    } else {
+      final db = await _db;
+      await db.transaction(run);
+    }
   }
 }

@@ -1,7 +1,8 @@
 // lib/repositories/product_repository.dart
 import 'dart:math';
 import 'package:sqflite/sqflite.dart';
-import '../utils/db.dart'; // Asegúrate que existe lib/utils/db.dart y define AppDatabase
+import 'package:popperscuv/utils/db.dart';
+import 'package:popperscuv/utils/helpers.dart';
 
 // Helpers locales (por si tu db.dart no los expone)
 String nowIso() => DateTime.now().toIso8601String();

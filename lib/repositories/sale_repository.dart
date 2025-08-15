@@ -5,129 +5,90 @@ import 'package:popperscuv/utils/helpers.dart';
 class SaleRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
 
-  Future<String> save(
-          Map<String, Object?> sale, List<Map<String, Object?>> items) =>
-      create(sale, items);
-
-  Future<String> create(
-      Map<String, Object?> sale, List<Map<String, Object?>> items) async {
+  /// Inserta venta e items, descuenta stock y registra movimientos.
+  /// Calcula utilidad así:
+  ///   profit = (sum(price*qty - lineDiscount) - discount) - sum(cost*qty)
+  /// El shipping no afecta la utilidad.
+  Future<void> create(Map<String, Object?> sale, List<Map<String, Object?>> items) async {
     final db = await _db;
 
-    // 1) Precarga de costos por productId si el item no envía 'cost'
-    final ids = items
-        .map((it) => it['productId']?.toString())
-        .where((s) => s != null && s!.isNotEmpty)
-        .cast<String>()
-        .toSet();
+    // Cálculos base
+    double gross = 0.0;      // sum(price*qty - lineDiscount)
+    double costSum = 0.0;    // sum(cost*qty)
 
-    final costByProductId = <String, double>{};
-    if (ids.isNotEmpty) {
-      final placeholders = List.filled(ids.length, '?').join(',');
-      final rows = await db.rawQuery(
-        'SELECT id, cost FROM products WHERE id IN ($placeholders)',
-        ids.toList(),
-      );
-      for (final r in rows) {
-        costByProductId[r['id'] as String] =
-            (r['cost'] as num?)?.toDouble() ?? 0.0;
-      }
+    for (final it in items) {
+      final price = (it['price'] is num) ? (it['price'] as num).toDouble() : double.tryParse('${it['price']}') ?? 0.0;
+      final cost  = (it['cost']  is num) ? (it['cost']  as num).toDouble() : double.tryParse('${it['cost']}')  ?? 0.0;
+      final qty   = (it['quantity'] is num) ? (it['quantity'] as num).toInt() : int.tryParse('${it['quantity']}') ?? 0;
+      final lineDiscount = (it['lineDiscount'] is num) ? (it['lineDiscount'] as num).toDouble() : double.tryParse('${it['lineDiscount']}') ?? 0.0;
+
+      gross += (price * qty) - lineDiscount;
+      costSum += (cost * qty);
     }
 
-    double subtotal = 0;
-    double itemsProfit = 0;
+    final discount = (sale['discount'] is num) ? (sale['discount'] as num).toDouble() : double.tryParse('${sale['discount']}') ?? 0.0;
+    final shipping = (sale['shippingCost'] is num) ? (sale['shippingCost'] as num).toDouble() : double.tryParse('${sale['shippingCost']}') ?? 0.0;
 
-    final preparedItems = items.map<Map<String, Object?>>((it) {
-      final qty = (it['quantity'] as num).toInt();
-      final price = (it['price'] as num).toDouble();
-      final lineDiscount = (it['lineDiscount'] as num?)?.toDouble() ?? 0.0;
+    final profit = (gross - discount) - costSum;
+    final computedTotal = gross - discount + shipping;
 
-      // Si no viene 'cost', usamos el de products
-      double cost =
-          (it['cost'] as num?)?.toDouble() ??
-          (it['productId'] != null
-              ? (costByProductId[it['productId']!.toString()] ?? 0.0)
-              : 0.0);
-
-      final sub = (price * qty) - lineDiscount;
-      final prof = (price - cost) * qty - lineDiscount;
-
-      subtotal += sub;
-      itemsProfit += prof;
-
-      return {
-        'id': it['id']?.toString() ?? genId(),
-        'product_id': it['productId'],
-        'name': it['name'],
-        'sku': it['sku'],
-        'quantity': qty,
-        'price': price,
-        'cost': cost,
-        'line_discount': lineDiscount,
-        'subtotal': sub,
-        'profit': prof,
-      };
-    }).toList();
-
-    final discount = (sale['discount'] as num?)?.toDouble() ?? 0.0;
-    final shipping = (sale['shippingCost'] as num?)?.toDouble() ?? 0.0;
-    final profit = itemsProfit - discount;
-    final total =
-        (sale['total'] as num?)?.toDouble() ?? (subtotal - discount + shipping);
-
-    final saleId = sale['id']?.toString() ?? genId();
-    final createdAt = (sale['createdAt']?.toString()) ?? nowIso();
-    final paymentMethod = sale['paymentMethod']?.toString() ?? 'Efectivo';
-    final customerId = sale['customerId']?.toString();
+    final saleId = (sale['id']?.toString().trim().isNotEmpty ?? false) ? sale['id']!.toString() : genId();
+    final createdAt = (sale['createdAt']?.toString().trim().isNotEmpty ?? false) ? sale['createdAt']!.toString() : nowIso();
 
     await db.transaction((txn) async {
+      // Insert sale
       await txn.insert('sales', {
         'id': saleId,
-        'customer_id': customerId,
-        'total': total,
+        'customer_id': sale['customerId']?.toString(),
+        'total': (sale['total'] is num) ? (sale['total'] as num).toDouble() : computedTotal,
         'discount': discount,
         'shipping_cost': shipping,
         'profit': profit,
-        'payment_method': paymentMethod,
+        'payment_method': sale['paymentMethod']?.toString() ?? 'Efectivo',
         'created_at': createdAt,
-      });
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-      for (final it in preparedItems) {
+      // Insert items + descuento de stock + movimiento inventario
+      for (final it in items) {
+        final itemId = (it['id']?.toString().trim().isNotEmpty ?? false) ? it['id']!.toString() : genId();
+        final price = (it['price'] is num) ? (it['price'] as num).toDouble() : double.tryParse('${it['price']}') ?? 0.0;
+        final cost  = (it['cost']  is num) ? (it['cost']  as num).toDouble() : double.tryParse('${it['cost']}')  ?? 0.0;
+        final qty   = (it['quantity'] is num) ? (it['quantity'] as num).toInt() : int.tryParse('${it['quantity']}') ?? 0;
+        final lineDiscount = (it['lineDiscount'] is num) ? (it['lineDiscount'] as num).toDouble() : double.tryParse('${it['lineDiscount']}') ?? 0.0;
+        final subtotal = (price * qty) - lineDiscount;
+
         await txn.insert('sale_items', {
-          'id': it['id'],
+          'id': itemId,
           'sale_id': saleId,
-          'product_id': it['product_id'],
-          'name': it['name'],
-          'sku': it['sku'],
-          'quantity': it['quantity'],
-          'price': it['price'],
-          'cost': it['cost'],
-          'line_discount': it['line_discount'],
-          'subtotal': it['subtotal'],
-          'profit': it['profit'],
-        });
+          'product_id': it['productId']?.toString(),
+          'name': it['name']?.toString(),
+          'sku': it['sku']?.toString(),
+          'price': price,
+          'cost': cost,
+          'quantity': qty,
+          'line_discount': lineDiscount,
+          'subtotal': subtotal,
+          'created_at': createdAt,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-        final productId = it['product_id']?.toString();
-        if (productId != null && productId.isNotEmpty) {
-          final cur = await txn.query('products',
-              where: 'id = ?', whereArgs: [productId], limit: 1);
-          if (cur.isNotEmpty) {
-            final current = (cur.first['stock'] as int);
-            final newStock = current - (it['quantity'] as int);
-            await txn.update('products', {'stock': newStock, 'updated_at': nowIso()},
-                where: 'id = ?', whereArgs: [productId]);
-            await txn.insert('inventory_movements', {
-              'id': genId(),
-              'product_id': productId,
-              'delta': -(it['quantity'] as int),
-              'note': 'venta $saleId',
-              'created_at': nowIso(),
-            });
-          }
+        // descontar stock
+        final pid = it['productId']?.toString();
+        if (pid != null && pid.isNotEmpty && qty != 0) {
+          final curRows = await txn.query('products', columns: ['stock'], where: 'id=?', whereArgs: [pid], limit: 1);
+          final cur = curRows.isEmpty ? 0 : (curRows.first['stock'] as num?)?.toInt() ?? 0;
+          final newStock = cur - qty;
+          await txn.update('products', {'stock': newStock, 'updated_at': nowIso()}, where: 'id=?', whereArgs: [pid]);
+
+          await txn.insert('inventory_movements', {
+            'id': genId(),
+            'product_id': pid,
+            'delta': -qty,
+            'reason': 'sale:$saleId',
+            'created_at': createdAt,
+          });
         }
       }
     });
-
-    return saleId;
   }
 
   Future<List<Map<String, Object?>>> history({
@@ -139,67 +100,73 @@ class SaleRepository {
     final where = <String>[];
     final args = <Object?>[];
 
-    if (customerId != null && customerId.isNotEmpty) {
+    if (customerId != null && customerId.trim().isNotEmpty) {
       where.add('s.customer_id = ?');
-      args.add(customerId);
+      args.add(customerId.trim());
     }
-    if (from != null && to != null) {
-      where.add('s.created_at BETWEEN ? AND ?');
+    if (from != null) {
+      where.add('s.created_at >= ?');
       args.add(from.toIso8601String());
-      args.add(to.toIso8601String());
+    }
+    if (to != null) {
+      // para incluir el día completo, sumamos 1 día exclusivo si quieres
+      final excl = DateTime(to.year, to.month, to.day, 23, 59, 59, 999);
+      where.add('s.created_at <= ?');
+      args.add(excl.toIso8601String());
     }
 
-    return db.rawQuery('''
-      SELECT s.*, c.name AS customer_name
+    final sql = '''
+      SELECT
+        s.id,
+        s.created_at,
+        s.customer_id,
+        c.name AS customer_name,
+        s.total,
+        s.discount,
+        s.shipping_cost,
+        s.profit
       FROM sales s
       LEFT JOIN customers c ON c.id = s.customer_id
       ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
       ORDER BY s.created_at DESC
-    ''', args);
+    ''';
+
+    return db.rawQuery(sql, args);
   }
 
-  Future<List<Map<String, Object?>>> topCustomers(
-      DateTime from, DateTime to) async {
+  Future<List<Map<String, Object?>>> topCustomers(DateTime from, DateTime to) async {
     final db = await _db;
-    return db.rawQuery('''
+    final sql = '''
       SELECT
-        s.customer_id,
-        COALESCE(c.name, 'Mostrador') AS name,
+        s.customer_id AS id,
+        COALESCE(c.name, s.customer_id) AS name,
         COUNT(*) AS orders,
-        SUM(s.total)  AS total,
+        SUM(s.total) AS total,
         SUM(s.profit) AS profit
       FROM sales s
       LEFT JOIN customers c ON c.id = s.customer_id
-      WHERE s.created_at BETWEEN ? AND ?
-      GROUP BY s.customer_id, c.name
+      WHERE s.created_at >= ? AND s.created_at <= ?
+      GROUP BY s.customer_id, name
       ORDER BY total DESC
-    ''', [from.toIso8601String(), to.toIso8601String()]);
+    ''';
+    final excl = DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
+    return db.rawQuery(sql, [from.toIso8601String(), excl]);
   }
 
   Future<Map<String, Object?>> summary(DateTime from, DateTime to) async {
     final db = await _db;
-    final rows = await db.rawQuery('''
+    final sql = '''
       SELECT
-        SUM(total)  AS total,
+        COUNT(*) AS orders,
+        SUM(total) AS total,
         SUM(discount) AS discount,
-        SUM(shipping_cost) AS shipping_cost,
+        SUM(shipping_cost) AS shipping,
         SUM(profit) AS profit
       FROM sales
-      WHERE created_at BETWEEN ? AND ?
-    ''', [from.toIso8601String(), to.toIso8601String()]);
-
-    final m = rows.isNotEmpty ? rows.first : <String, Object?>{};
-    final total = (m['total'] as num?)?.toDouble() ?? 0.0;
-    final profit = (m['profit'] as num?)?.toDouble() ?? 0.0;
-    final discount = (m['discount'] as num?)?.toDouble() ?? 0.0;
-    final shipping = (m['shipping_cost'] as num?)?.toDouble() ?? 0.0;
-    final pct = total > 0 ? (profit / total) * 100.0 : 0.0;
-    return {
-      'total': total,
-      'discount': discount,
-      'shipping_cost': shipping,
-      'profit': profit,
-      'profit_pct': pct,
-    };
+      WHERE created_at >= ? AND created_at <= ?
+    ''';
+    final excl = DateTime(to.year, to.month, to.day, 23, 59, 59, 999).toIso8601String();
+    final rows = await db.rawQuery(sql, [from.toIso8601String(), excl]);
+    return rows.isEmpty ? <String, Object?>{} : rows.first;
   }
 }

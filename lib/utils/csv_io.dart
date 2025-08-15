@@ -11,12 +11,19 @@ import 'package:sqflite/sqflite.dart';
 import 'package:popperscuv/db/app_database.dart';
 import 'package:popperscuv/repositories/product_repository.dart';
 
+/// Helpers por si tu proyecto no los expone globalmente.
+/// Si ya tienes nowIso() / genId() globales, puedes borrar estas dos funciones.
+String nowIso() => DateTime.now().toIso8601String();
+String genId() => DateTime.now().microsecondsSinceEpoch.toString();
+
 class CsvIO {
-  // ===== EXPORT =====
+  // ========================= EXPORTS =========================
+
   static Future<String> exportTable(String table) async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(table);
     final headers = rows.isNotEmpty ? rows.first.keys.toList() : <String>[];
+
     final data = <List<dynamic>>[
       headers,
       ...rows.map((m) => headers.map((h) => m[h]).toList()),
@@ -27,22 +34,18 @@ class CsvIO {
     final path =
         p.join(dir.path, '${table}_${DateTime.now().millisecondsSinceEpoch}.csv');
     await File(path).writeAsString(csv);
-
-    // Para que se vea fácil en log y en tu UI
-    // (tu ReportsPage ya muestra el path devuelto)
     // ignore: avoid_print
     print('CSV exportado: $path');
     return path;
   }
 
   static Future<String> exportTableLocal(String table) => exportTable(table);
-  static Future<String> exportTableToDownloads(String table) =>
-      exportTable(table);
+  static Future<String> exportTableToDownloads(String table) => exportTable(table);
 
-  /// Ruta del directorio de exportaciones realmente usado.
+  /// Ruta exacta que se usa para exportar.
   static Future<String> whereAreExports() async => (await _exportsDir()).path;
 
-  /// Lista completa de archivos exportados (rutas absolutas), recientes primero.
+  /// Lista de CSVs exportados, más recientes primero.
   static Future<List<String>> listExportedFiles() async {
     final d = await _exportsDir();
     final files = d
@@ -54,32 +57,62 @@ class CsvIO {
     return files.map((f) => f.path).toList();
   }
 
-  // ===== IMPORTS =====
+  // ========================= IMPORTS =========================
 
-  /// Ajuste de inventarios: columnas (id o sku), delta, note(opcional)
+  /// Ajuste de inventario desde CSV.
+  ///
+  /// Acepta encabezados (case-insensitive) con sinónimos:
+  /// id: [id, product_id, codigo_interno]
+  /// sku: [sku, code, codigo]
+  /// delta: [delta, qty, cantidad, ajuste]
+  /// stock absoluto: [stock, existencias]
+  /// note: [note, nota, comment, comentario]
+  ///
+  /// Reglas:
+  /// - Si hay 'stock', se ajusta a ese valor absoluto (delta = stock - actual).
+  /// - Si no hay 'stock' pero hay 'delta', se suma ese delta al stock actual.
+  /// - Si no se resuelve 'id' ni 'sku', la fila se omite.
   static Future<int> importInventoryAddsFromCsv() async {
     final bytes = await _pickCsvBytes();
     if (bytes == null) return 0;
+
     final csv = utf8.decode(bytes);
     final rows = const CsvToListConverter(eol: '\n')
         .convert(csv, shouldParseNumbers: false);
+
     if (rows.isEmpty) return 0;
 
-    final headers = rows.first.map((e) => e.toString()).toList();
-    int idx(String k) => headers.indexOf(k);
+    // ---------- Mapeo flexible de encabezados ----------
+    final headers = rows.first.map((e) => (e?.toString() ?? '').trim()).toList();
+    int idxOf(Set<String> names) {
+      final lower = headers.map((h) => h.toLowerCase()).toList();
+      for (var i = 0; i < lower.length; i++) {
+        if (names.contains(lower[i])) return i;
+      }
+      return -1;
+    }
+
+    final idIdx = idxOf({'id', 'product_id', 'codigo_interno'});
+    final skuIdx = idxOf({'sku', 'code', 'codigo'});
+    final deltaIdx = idxOf({'delta', 'qty', 'cantidad', 'ajuste'});
+    final stockIdx = idxOf({'stock', 'existencias'});
+    final noteIdx = idxOf({'note', 'nota', 'comment', 'comentario'});
 
     final db = await AppDatabase.instance.database;
-    int count = 0;
 
+    int applied = 0;
     await db.transaction((txn) async {
       for (var i = 1; i < rows.length; i++) {
         final r = rows[i];
-        final id = _cell(r, idx('id'));
-        final sku = _cell(r, idx('sku'));
-        final delta = _num(_cell(r, idx('delta')), 0).toInt();
-        final note = _cell(r, idx('note')) ?? 'csv import';
-        if (delta == 0) continue;
 
+        String? id =
+            (idIdx >= 0 && idIdx < r.length) ? _str(r[idIdx]) : null;
+        String? sku =
+            (skuIdx >= 0 && skuIdx < r.length) ? _str(r[skuIdx]) : null;
+        final note =
+            (noteIdx >= 0 && noteIdx < r.length) ? _str(r[noteIdx]) : null;
+
+        // Resolver productId por id o por sku
         String? productId = id;
         if ((productId == null || productId.isEmpty) &&
             sku != null &&
@@ -88,13 +121,37 @@ class CsvIO {
               where: 'sku = ?', whereArgs: [sku], limit: 1);
           if (found.isNotEmpty) productId = found.first['id'] as String?;
         }
-        if (productId == null || productId.isEmpty) continue;
+        if (productId == null || productId.isEmpty) {
+          // Fila no usable
+          continue;
+        }
 
+        // Leer stock actual
         final cur = await txn.query('products',
             where: 'id = ?', whereArgs: [productId], limit: 1);
         if (cur.isEmpty) continue;
 
-        final current = (cur.first['stock'] as int);
+        final current =
+            (cur.first['stock'] is int) ? cur.first['stock'] as int : int.tryParse(cur.first['stock'].toString()) ?? 0;
+
+        // Calcular nuevoStock vía stock absoluto o vía delta
+        int? stockAbs;
+        if (stockIdx >= 0 && stockIdx < r.length) {
+          stockAbs = _toInt(r[stockIdx]);
+        }
+
+        int delta = 0;
+        if (stockAbs != null) {
+          delta = stockAbs - current; // ajustar a valor absoluto
+        } else if (deltaIdx >= 0 && deltaIdx < r.length) {
+          delta = _toInt(r[deltaIdx]) ?? 0;
+        }
+
+        if (delta == 0) {
+          // Nada que hacer
+          continue;
+        }
+
         final newStock = current + delta;
 
         await txn.update('products', {'stock': newStock, 'updated_at': nowIso()},
@@ -104,14 +161,17 @@ class CsvIO {
           'id': genId(),
           'product_id': productId,
           'delta': delta,
-          'note': note,
+          'note': note ?? 'csv import',
           'created_at': nowIso(),
         });
-        count++;
+
+        applied++;
       }
     });
 
-    return count;
+    // ignore: avoid_print
+    print('CSV inventario aplicado en $applied renglones.');
+    return applied;
   }
 
   /// Upsert de productos. Columnas: id,name,sku,category,price,cost,stock
@@ -122,16 +182,15 @@ class CsvIO {
     return importProductsFromCsvString(csv);
   }
 
-  /// Compatibilidad: igual a upsert.
   static Future<int> importProductsFromCsv() => importProductsUpsertFromCsv();
 
-  // ---- Helpers
   static Future<int> importProductsFromCsvString(String csv) async {
     final rows = const CsvToListConverter(eol: '\n')
         .convert(csv, shouldParseNumbers: false);
     if (rows.isEmpty) return 0;
-    final headers = rows.first.map((e) => e.toString()).toList();
-    int idx(String k) => headers.indexOf(k);
+
+    final headers = rows.first.map((e) => (e?.toString() ?? '').trim()).toList();
+    int idx(String k) => headers.map((h) => h.toLowerCase()).toList().indexOf(k.toLowerCase());
 
     final repo = ProductRepository();
     int count = 0;
@@ -139,18 +198,20 @@ class CsvIO {
     for (var i = 1; i < rows.length; i++) {
       final r = rows[i];
       await repo.upsertProduct({
-        'id': _cell(r, idx('id')),
-        'name': _cell(r, idx('name')) ?? '',
-        'sku': _cell(r, idx('sku')),
-        'category': _cell(r, idx('category')),
-        'price': _num(_cell(r, idx('price')), 0).toDouble(),
-        'cost': _num(_cell(r, idx('cost')), 0).toDouble(),
-        'stock': _num(_cell(r, idx('stock')), 0).toInt(),
+        'id': _strAt(r, idx('id')),
+        'name': _strAt(r, idx('name')) ?? '',
+        'sku': _strAt(r, idx('sku')),
+        'category': _strAt(r, idx('category')),
+        'price': _numAt(r, idx('price'), 0).toDouble(),
+        'cost': _numAt(r, idx('cost'), 0).toDouble(),
+        'stock': _numAt(r, idx('stock'), 0).toInt(),
       });
       count++;
     }
     return count;
   }
+
+  // ========================= HELPERS =========================
 
   static Future<Uint8List?> _pickCsvBytes() async {
     final res = await FilePicker.platform.pickFiles(
@@ -163,15 +224,32 @@ class CsvIO {
     return res.files.single.bytes;
   }
 
-  static String? _cell(List row, int index) =>
-      (index >= 0 && index < row.length) ? row[index]?.toString() : null;
-
-  static num _num(String? s, num fallback) {
-    if (s == null) return fallback;
-    return num.tryParse(s.trim().replaceAll(',', '')) ?? fallback;
+  static String? _str(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString().trim();
+    return s.isEmpty ? null : s;
   }
 
-  // Directorio de exportaciones: externo de la app, con fallback interno.
+  static String? _strAt(List row, int index) =>
+      (index >= 0 && index < row.length) ? _str(row[index]) : null;
+
+  static num _numAt(List row, int index, num fallback) {
+    if (index < 0 || index >= row.length) return fallback;
+    return _toNum(row[index]) ?? fallback;
+  }
+
+  static int? _toInt(dynamic v) {
+    final n = _toNum(v);
+    return n?.round();
+  }
+
+  static num? _toNum(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString().trim().replaceAll(',', '');
+    if (s.isEmpty) return null;
+    return num.tryParse(s);
+  }
+
   static Future<Directory> _exportsDir() async {
     final ext = await getExternalStorageDirectory(); // Android: .../Android/data/<pkg>/files
     if (ext != null) {
@@ -183,5 +261,5 @@ class CsvIO {
     final d = Directory(p.join(dbDir, 'exports'));
     await d.create(recursive: true);
     return d;
-    }
+  }
 }

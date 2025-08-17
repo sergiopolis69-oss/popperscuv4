@@ -46,10 +46,9 @@ class CsvIO {
   static Future<String?> exportTable(String table, {String? fileName}) async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(table);
+    final headers = rows.isNotEmpty ? rows.first.keys.toList() : <String>[];
     if (rows.isEmpty) {
-      final docs = await getApplicationDocumentsDirectory();
-      final path = p.join(docs.path, (fileName ?? '$table.csv'));
-      final headers = <String>[];
+      // encabezados mínimos
       if (table == 'products') {
         headers.addAll(['id','sku','name','price','cost','stock','category','created_at','updated_at']);
       } else if (table == 'customers') {
@@ -57,17 +56,11 @@ class CsvIO {
       } else if (table == 'sales') {
         headers.addAll(['id','customer_id','total','discount','shipping_cost','profit','payment_method','created_at']);
       }
-      final csv = const ListToCsvConverter().convert([headers]);
-      await File(path).writeAsString(csv, flush: true);
-      return path;
     }
-
-    final headers = rows.first.keys.toList();
     final data = <List<dynamic>>[headers];
     for (final r in rows) {
       data.add(headers.map((h) => r[h]).toList());
     }
-
     final csv = const ListToCsvConverter().convert(data);
     final docs = await getApplicationDocumentsDirectory();
     final path = p.join(docs.path, (fileName ?? '$table.csv'));
@@ -129,7 +122,6 @@ class CsvIO {
           } else {
             final hasAny = name.isNotEmpty || priceTxt.isNotEmpty || costTxt.isNotEmpty;
             if (!hasAny) { skipped++; continue; }
-
             final initialStock = stockAbs.isNotEmpty
                 ? _i(stockAbs)
                 : qtyDelta.isNotEmpty ? _i(qtyDelta) : 0;
@@ -156,7 +148,7 @@ class CsvIO {
     return {'inserted': inserted, 'updated': updated, 'skipped': skipped, 'errors': errors};
   }
 
-  // ---------- IMPORT: AJUSTES (delta por qty) ----------
+  // ---------- IMPORT: AJUSTES INVENTARIO (delta) ----------
   static Future<Map<String, int>> importInventoryAddsFromCsv() async {
     final bytes = await _pickCsvBytes();
     if (bytes == null) return {'changed': 0, 'missing': 0, 'errors': 0};
@@ -198,8 +190,64 @@ class CsvIO {
     return {'changed': changed, 'missing': missing, 'errors': errors};
   }
 
-  // ---------- COMPAT: importProductsFromCsv (usado por reports_page.dart) ----------
-  /// Devuelve cuántos registros fueron insertados/actualizados.
+  // ---------- IMPORT: CLIENTES ----------
+  /// Columnas aceptadas (insensible a mayúsculas): id, name, phone
+  /// Si `id` está vacío, se usa `phone` como ID. Upsert por `id`.
+  static Future<Map<String, int>> importCustomersFromCsv() async {
+    final bytes = await _pickCsvBytes();
+    if (bytes == null) return {'inserted': 0, 'updated': 0, 'skipped': 0, 'errors': 0};
+
+    final table = _parseCsv(bytes);
+    if (table.isEmpty) return {'inserted': 0, 'updated': 0, 'skipped': 0, 'errors': 0};
+
+    final h = _headerMap(table.first);
+    final db = await AppDatabase.instance.database;
+
+    int inserted = 0, updated = 0, skipped = 0, errors = 0;
+
+    await db.transaction((txn) async {
+      for (var r = 1; r < table.length; r++) {
+        try {
+          final row   = table[r];
+          final id0   = _s(_cell(row, h, 'id'));
+          final phone = _s(_cell(row, h, 'phone'));
+          final name  = _s(_cell(row, h, 'name'));
+          final id    = id0.isNotEmpty ? id0 : (phone.isNotEmpty ? phone : '');
+
+          if (id.isEmpty && name.isEmpty && phone.isEmpty) { skipped++; continue; }
+
+          final exists = await txn.query('customers', where: 'id = ?', whereArgs: [id], limit: 1);
+
+          if (exists.isEmpty) {
+            await txn.insert('customers', {
+              'id'        : id.isNotEmpty ? id : genId(),
+              'name'      : name.isNotEmpty ? name : null,
+              'phone'     : phone.isNotEmpty ? phone : null,
+              'created_at': nowIso(),
+              'updated_at': nowIso(),
+            }, conflictAlgorithm: ConflictAlgorithm.abort);
+            inserted++;
+          } else {
+            final patch = <String, Object?>{'updated_at': nowIso()};
+            if (name.isNotEmpty)  patch['name']  = name;
+            if (phone.isNotEmpty) patch['phone'] = phone;
+            if (patch.length > 1) {
+              await txn.update('customers', patch, where: 'id = ?', whereArgs: [id]);
+              updated++;
+            } else {
+              skipped++;
+            }
+          }
+        } catch (_) {
+          errors++;
+        }
+      }
+    });
+
+    return {'inserted': inserted, 'updated': updated, 'skipped': skipped, 'errors': errors};
+  }
+
+  // Compat usado previamente
   static Future<int> importProductsFromCsv() async {
     final m = await importProductsUpsertFromCsv();
     return (m['inserted'] ?? 0) + (m['updated'] ?? 0);

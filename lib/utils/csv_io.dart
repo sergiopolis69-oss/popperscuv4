@@ -10,7 +10,6 @@ import '../utils/db.dart';
 import '../utils/misc.dart';
 
 class CsvIO {
-  // ----------------- Helpers -----------------
   static String _s(dynamic v) => (v ?? '').toString().trim();
   static double _d(dynamic v) => toDouble(v);
   static int _i(dynamic v) => toInt(v);
@@ -27,7 +26,6 @@ class CsvIO {
   static List<List<dynamic>> _parseCsv(Uint8List bytes) {
     final csv = String.fromCharCodes(bytes);
     return const CsvToListConverter(eol: '\n').convert(csv);
-    // Nota: si tu archivo viene en ; separador, usa fieldDelimiter: ';'
   }
 
   static Map<String, int> _headerMap(List<dynamic> headerRow) {
@@ -44,16 +42,13 @@ class CsvIO {
     return row[idx];
   }
 
-  // ----------------- EXPORT -----------------
-  /// Exporta una tabla a CSV en la carpeta de documentos de la app.
-  /// Devuelve la ruta del archivo creado.
+  // ---------- EXPORT ----------
   static Future<String?> exportTable(String table, {String? fileName}) async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(table);
     if (rows.isEmpty) {
       final docs = await getApplicationDocumentsDirectory();
       final path = p.join(docs.path, (fileName ?? '$table.csv'));
-      // Crear un archivo vacío con encabezado nada más
       final headers = <String>[];
       if (table == 'products') {
         headers.addAll(['id','sku','name','price','cost','stock','category','created_at','updated_at']);
@@ -80,11 +75,7 @@ class CsvIO {
     return path;
   }
 
-  // ----------------- IMPORT UPSERT PRODUCTS -----------------
-  /// Importa/actualiza productos por SKU.
-  /// Columnas aceptadas (case-insensitive): sku, name, price, cost, stock, qty, category.
-  /// - Si existe el SKU: PATCH (no pisa con vacío). `stock` = absoluto; `qty` = delta.
-  /// - Si no existe: inserta. Para evitar “basura”, requiere al menos (sku + name/price/cost).
+  // ---------- IMPORT: UPSERT PRODUCTS ----------
   static Future<Map<String, int>> importProductsUpsertFromCsv() async {
     final bytes = await _pickCsvBytes();
     if (bytes == null) return {'inserted': 0, 'updated': 0, 'skipped': 0, 'errors': 0};
@@ -165,8 +156,7 @@ class CsvIO {
     return {'inserted': inserted, 'updated': updated, 'skipped': skipped, 'errors': errors};
   }
 
-  // ----------------- IMPORT AJUSTES DE INVENTARIO (delta) -----------------
-  /// Espera columnas: sku y qty (también tolera: cantidad/ajuste/delta/stock como delta).
+  // ---------- IMPORT: AJUSTES (delta por qty) ----------
   static Future<Map<String, int>> importInventoryAddsFromCsv() async {
     final bytes = await _pickCsvBytes();
     if (bytes == null) return {'changed': 0, 'missing': 0, 'errors': 0};
@@ -206,5 +196,12 @@ class CsvIO {
     });
 
     return {'changed': changed, 'missing': missing, 'errors': errors};
+  }
+
+  // ---------- COMPAT: importProductsFromCsv (usado por reports_page.dart) ----------
+  /// Devuelve cuántos registros fueron insertados/actualizados.
+  static Future<int> importProductsFromCsv() async {
+    final m = await importProductsUpsertFromCsv();
+    return (m['inserted'] ?? 0) + (m['updated'] ?? 0);
   }
 }

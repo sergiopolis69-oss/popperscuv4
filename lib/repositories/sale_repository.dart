@@ -5,7 +5,7 @@ import '../utils/misc.dart';
 class SaleRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
 
-  /// Crea venta con utilidad correcta: (precio*qty - descLinea) - (costo*qty) - descTotal (envío NO afecta utilidad).
+  /// Crea venta con utilidad correcta.
   Future<void> create(Map<String, Object?> sale, List<Map<String, Object?>> items) async {
     final db = await _db;
     await db.transaction((txn) async {
@@ -22,29 +22,24 @@ class SaleRepository {
         final cost         = toDouble(it['cost']);
         final qty          = toInt(it['quantity'], fallback: 1);
         final lineDiscount = toDouble(it['lineDiscount']);
-
         final lineSubtotal = (price * qty - lineDiscount);
+
         subtotal  += lineSubtotal;
         costTotal += (cost * qty);
 
-        await txn.insert(
-          'sale_items',
-          {
-            'id'           : toStr(it['id']).isNotEmpty ? toStr(it['id']) : genId(),
-            'sale_id'      : saleId,
-            'product_id'   : toStr(it['productId']).isNotEmpty ? toStr(it['productId']) : null,
-            'sku'          : toStr(it['sku']).isNotEmpty ? toStr(it['sku']) : null,
-            'name'         : toStr(it['name']).isNotEmpty ? toStr(it['name']) : null,
-            'price'        : price,
-            'cost'         : cost,
-            'quantity'     : qty,
-            'line_discount': lineDiscount,
-            'subtotal'     : lineSubtotal,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('sale_items', {
+          'id'           : toStr(it['id']).isNotEmpty ? toStr(it['id']) : genId(),
+          'sale_id'      : saleId,
+          'product_id'   : toStr(it['productId']).isNotEmpty ? toStr(it['productId']) : null,
+          'sku'          : toStr(it['sku']).isNotEmpty ? toStr(it['sku']) : null,
+          'name'         : toStr(it['name']).isNotEmpty ? toStr(it['name']) : null,
+          'price'        : price,
+          'cost'         : cost,
+          'quantity'     : qty,
+          'line_discount': lineDiscount,
+          'subtotal'     : lineSubtotal,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-        // Descontar inventario del producto vendido (si existe productId)
         if (toStr(it['productId']).isNotEmpty && qty > 0) {
           final pid = toStr(it['productId']);
           final rows = await txn.query('products', columns: ['stock'], where: 'id = ?', whereArgs: [pid], limit: 1);
@@ -60,24 +55,43 @@ class SaleRepository {
       final total  = toDouble(sale['total'], fallback: computedTotal);
       final profit = (subtotal - discount) - costTotal;
 
-      await txn.insert(
-        'sales',
-        {
-          'id'            : saleId,
-          'customer_id'   : toStr(sale['customerId']).isNotEmpty ? toStr(sale['customerId']) : null,
-          'total'         : total,
-          'discount'      : discount,
-          'shipping_cost' : shipping,
-          'profit'        : profit,
-          'payment_method': toStr(sale['paymentMethod']).isNotEmpty ? toStr(sale['paymentMethod']) : 'Efectivo',
-          'created_at'    : createdAt,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert('sales', {
+        'id'            : saleId,
+        'customer_id'   : toStr(sale['customerId']).isNotEmpty ? toStr(sale['customerId']) : null,
+        'total'         : total,
+        'discount'      : discount,
+        'shipping_cost' : shipping,
+        'profit'        : profit,
+        'payment_method': toStr(sale['paymentMethod']).isNotEmpty ? toStr(sale['paymentMethod']) : 'Efectivo',
+        'created_at'    : createdAt,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
 
-  /// Historial de ventas (opcional: para tus pantallas de reporte)
+  /// Resumen entre fechas: total, descuento, envío, utilidad y órdenes.
+  Future<Map<String, Object?>> summary(DateTime from, DateTime to) async {
+    final db = await _db;
+    final rows = await db.rawQuery('''
+      SELECT
+        COALESCE(SUM(total),0)          AS total,
+        COALESCE(SUM(discount),0)       AS discount,
+        COALESCE(SUM(shipping_cost),0)  AS shipping,
+        COALESCE(SUM(profit),0)         AS profit,
+        COUNT(id)                       AS orders
+      FROM sales
+      WHERE datetime(created_at) BETWEEN datetime(?) AND datetime(?)
+    ''', [from.toIso8601String(), to.toIso8601String()]);
+    final m = rows.isNotEmpty ? rows.first : <String, Object?>{};
+    return {
+      'total'   : (m['total'] as num?)?.toDouble() ?? 0.0,
+      'discount': (m['discount'] as num?)?.toDouble() ?? 0.0,
+      'shipping': (m['shipping'] as num?)?.toDouble() ?? 0.0,
+      'profit'  : (m['profit'] as num?)?.toDouble() ?? 0.0,
+      'orders'  : (m['orders'] as num?)?.toInt() ?? 0,
+    };
+  }
+
+  /// Historial (por si lo usas en otras pantallas)
   Future<List<Map<String, Object?>>> history({String? customerId, DateTime? from, DateTime? to}) async {
     final db = await _db;
     final where = <String>[];
@@ -88,7 +102,6 @@ class SaleRepository {
     return db.query('sales', where: where.isNotEmpty ? where.join(' AND ') : null, whereArgs: args, orderBy: 'created_at DESC');
   }
 
-  /// Top clientes entre fechas (opcional: para tu módulo de “Top Customers”)
   Future<List<Map<String, Object?>>> topCustomers(DateTime from, DateTime to) async {
     final db = await _db;
     final rows = await db.rawQuery('''

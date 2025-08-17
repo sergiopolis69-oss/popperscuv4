@@ -1,159 +1,19 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-
 import 'package:csv/csv.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart';
 
-import 'package:popperscuv/utils/db.dart';
-import 'package:popperscuv/utils/helpers.dart';
-import 'package:popperscuv/repositories/product_repository.dart';
+import '../utils/db.dart';
+import '../utils/misc.dart';
 
 class CsvIO {
-  /// Exporta una tabla completa a CSV en la carpeta de documentos de la app.
-  /// Retorna la ruta del archivo.
-  static Future<String> exportTable(String table) async {
-    final db = await AppDatabase.instance.database;
-
-    final rows = await db.query(table);
-    if (rows.isEmpty) {
-      final outPath = await _writeToAppDocs(
-        '${table}_${DateTime.now().toIso8601String().replaceAll(':', '-')}.csv',
-        const ListToCsvConverter().convert(<List<dynamic>>[]),
-      );
-      return outPath;
-    }
-
-    // encabezados en el orden de las claves del primer row
-    final headers = rows.first.keys.toList();
-    final data = <List<dynamic>>[
-      headers,
-      ...rows.map((r) => headers.map((h) => r[h]).toList()),
-    ];
-
-    final csv = const ListToCsvConverter().convert(data);
-    final outPath = await _writeToAppDocs(
-      '${table}_${DateTime.now().toIso8601String().replaceAll(':', '-')}.csv',
-      csv,
-    );
-    return outPath;
-  }
-
-  /// Importa productos (insert o replace) desde CSV.
-  /// Columnas soportadas: id, name, sku, category, price, cost, stock
-  /// Retorna cuántos registros procesó.
-  static Future<int> importProductsFromCsv() async {
-    final bytes = await _pickCsvBytes();
-    if (bytes == null) return 0;
-
-    final lines = const Utf8Decoder().convert(bytes).split(RegExp(r'\r?\n'));
-    if (lines.isEmpty) return 0;
-
-    final parsed = const CsvToListConverter(eol: '\n').convert(lines.join('\n'), shouldParseNumbers: false);
-    if (parsed.isEmpty) return 0;
-
-    final headers = parsed.first.map((e) => e.toString().trim()).toList();
-    final idx = Map.fromEntries(headers.asMap().entries.map((e) => MapEntry(e.value.toLowerCase(), e.key)));
-
-    int count = 0;
-    final repo = ProductRepository();
-
-    for (int i = 1; i < parsed.length; i++) {
-      final row = parsed[i];
-      if (row.isEmpty) continue;
-
-      String? id       = _get(row, idx, 'id');
-      final name       = _get(row, idx, 'name');
-      final sku        = _get(row, idx, 'sku');
-      final category   = _get(row, idx, 'category');
-      final price      = _getDouble(row, idx, 'price');
-      final cost       = _getDouble(row, idx, 'cost');
-      final stock      = _getInt(row, idx, 'stock');
-
-      if ((name == null || name.isEmpty) && (sku == null || sku.isEmpty)) {
-        continue; // necesita al menos name o sku
-      }
-      id = (id != null && id.isNotEmpty) ? id : genId();
-
-      await repo.upsertProduct({
-        'id': id,
-        'name': name ?? sku,
-        'sku': sku,
-        'category': category,
-        'price': price ?? 0.0,
-        'cost': cost ?? 0.0,
-        'stock': stock ?? 0,
-      });
-      count++;
-    }
-    return count;
-  }
-
-  /// Importa (upsert) productos desde CSV — alias más explícito.
-  static Future<int> importProductsUpsertFromCsv() => importProductsFromCsv();
-
-  /// Importa movimientos de inventario (suma stock) desde CSV.
-  /// Columnas esperadas: product_id (o sku), delta, reason
-  /// Si no trae product_id pero sí sku, buscará el id por sku.
-  static Future<int> importInventoryAddsFromCsv() async {
-    final bytes = await _pickCsvBytes();
-    if (bytes == null) return 0;
-
-    final rows = const CsvToListConverter(eol: '\n').convert(const Utf8Decoder().convert(bytes), shouldParseNumbers: false);
-    if (rows.isEmpty) return 0;
-
-    final headers = rows.first.map((e) => e.toString().trim()).toList();
-    final idx = Map.fromEntries(headers.asMap().entries.map((e) => MapEntry(e.value.toLowerCase(), e.key)));
-
-    final repo = ProductRepository();
-    final db = await AppDatabase.instance.database;
-
-    int count = 0;
-    for (int i = 1; i < rows.length; i++) {
-      final r = rows[i];
-      if (r.isEmpty) continue;
-
-      String? productId = _get(r, idx, 'product_id');
-      final sku = _get(r, idx, 'sku');
-      final delta = _getInt(r, idx, 'delta') ?? 0;
-      final reason = _get(r, idx, 'reason') ?? 'csv_import';
-
-      if ((productId == null || productId.isEmpty) && (sku != null && sku.isNotEmpty)) {
-        final found = await db.query('products', columns: ['id'], where: 'LOWER(COALESCE(sku,"")) = LOWER(?)', whereArgs: [sku], limit: 1);
-        if (found.isNotEmpty) productId = found.first['id']?.toString();
-      }
-
-      if (productId == null || productId.isEmpty) continue;
-      if (delta == 0) continue;
-
-      await repo.adjustStock(productId, delta, reason: reason);
-      count++;
-    }
-
-    return count;
-  }
-
-  // ---------- helpers CSV ----------
-  static String? _get(List<dynamic> row, Map<String, int> idx, String col) {
-    final i = idx[col.toLowerCase()];
-    if (i == null || i >= row.length) return null;
-    final v = row[i];
-    if (v == null) return null;
-    final s = v.toString().trim();
-    return s.isEmpty ? null : s;
-    }
-
-  static double? _getDouble(List<dynamic> row, Map<String, int> idx, String col) {
-    final s = _get(row, idx, col);
-    return s == null ? null : double.tryParse(s);
-  }
-
-  static int? _getInt(List<dynamic> row, Map<String, int> idx, String col) {
-    final s = _get(row, idx, col);
-    return s == null ? null : int.tryParse(s);
-  }
+  // ----------------- Helpers -----------------
+  static String _s(dynamic v) => (v ?? '').toString().trim();
+  static double _d(dynamic v) => toDouble(v);
+  static int _i(dynamic v) => toInt(v);
 
   static Future<Uint8List?> _pickCsvBytes() async {
     final res = await FilePicker.platform.pickFiles(
@@ -161,15 +21,190 @@ class CsvIO {
       allowedExtensions: ['csv'],
       withData: true,
     );
-    final f = res?.files.first;
-    return f?.bytes;
+    return res?.files.single.bytes;
   }
 
-  static Future<String> _writeToAppDocs(String filename, String csv) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final outPath = p.join(dir.path, filename);
-    final file = File(outPath);
-    await file.writeAsString(csv, flush: true);
-    return outPath;
+  static List<List<dynamic>> _parseCsv(Uint8List bytes) {
+    final csv = String.fromCharCodes(bytes);
+    return const CsvToListConverter(eol: '\n').convert(csv);
+    // Nota: si tu archivo viene en ; separador, usa fieldDelimiter: ';'
+  }
+
+  static Map<String, int> _headerMap(List<dynamic> headerRow) {
+    final map = <String, int>{};
+    for (var i = 0; i < headerRow.length; i++) {
+      map[_s(headerRow[i]).toLowerCase()] = i;
+    }
+    return map;
+  }
+
+  static dynamic _cell(List<dynamic> row, Map<String, int> h, String key) {
+    final idx = h[key];
+    if (idx == null || idx >= row.length) return null;
+    return row[idx];
+  }
+
+  // ----------------- EXPORT -----------------
+  /// Exporta una tabla a CSV en la carpeta de documentos de la app.
+  /// Devuelve la ruta del archivo creado.
+  static Future<String?> exportTable(String table, {String? fileName}) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(table);
+    if (rows.isEmpty) {
+      final docs = await getApplicationDocumentsDirectory();
+      final path = p.join(docs.path, (fileName ?? '$table.csv'));
+      // Crear un archivo vacío con encabezado nada más
+      final headers = <String>[];
+      if (table == 'products') {
+        headers.addAll(['id','sku','name','price','cost','stock','category','created_at','updated_at']);
+      } else if (table == 'customers') {
+        headers.addAll(['id','name','phone','created_at','updated_at']);
+      } else if (table == 'sales') {
+        headers.addAll(['id','customer_id','total','discount','shipping_cost','profit','payment_method','created_at']);
+      }
+      final csv = const ListToCsvConverter().convert([headers]);
+      await File(path).writeAsString(csv, flush: true);
+      return path;
+    }
+
+    final headers = rows.first.keys.toList();
+    final data = <List<dynamic>>[headers];
+    for (final r in rows) {
+      data.add(headers.map((h) => r[h]).toList());
+    }
+
+    final csv = const ListToCsvConverter().convert(data);
+    final docs = await getApplicationDocumentsDirectory();
+    final path = p.join(docs.path, (fileName ?? '$table.csv'));
+    await File(path).writeAsString(csv, flush: true);
+    return path;
+  }
+
+  // ----------------- IMPORT UPSERT PRODUCTS -----------------
+  /// Importa/actualiza productos por SKU.
+  /// Columnas aceptadas (case-insensitive): sku, name, price, cost, stock, qty, category.
+  /// - Si existe el SKU: PATCH (no pisa con vacío). `stock` = absoluto; `qty` = delta.
+  /// - Si no existe: inserta. Para evitar “basura”, requiere al menos (sku + name/price/cost).
+  static Future<Map<String, int>> importProductsUpsertFromCsv() async {
+    final bytes = await _pickCsvBytes();
+    if (bytes == null) return {'inserted': 0, 'updated': 0, 'skipped': 0, 'errors': 0};
+
+    final table = _parseCsv(bytes);
+    if (table.isEmpty) return {'inserted': 0, 'updated': 0, 'skipped': 0, 'errors': 0};
+
+    final h = _headerMap(table.first);
+    final db = await AppDatabase.instance.database;
+
+    int inserted = 0, updated = 0, skipped = 0, errors = 0;
+
+    await db.transaction((txn) async {
+      for (var r = 1; r < table.length; r++) {
+        try {
+          final row = table[r];
+          final sku = _s(_cell(row, h, 'sku'));
+          if (sku.isEmpty) { skipped++; continue; }
+
+          final name     = _s(_cell(row, h, 'name'));
+          final priceTxt = _s(_cell(row, h, 'price'));
+          final costTxt  = _s(_cell(row, h, 'cost'));
+          final price    = _d(priceTxt);
+          final cost     = _d(costTxt);
+          final stockAbs = _s(_cell(row, h, 'stock'));
+          final qtyDelta = _s(_cell(row, h, 'qty'));
+          final category = _s(_cell(row, h, 'category'));
+
+          final found = await txn.query('products', where: 'sku = ?', whereArgs: [sku], limit: 1);
+          if (found.isNotEmpty) {
+            final id = found.first['id']?.toString();
+            final patch = <String, Object?>{'updated_at': nowIso()};
+            if (name.isNotEmpty) patch['name'] = name;
+            if (priceTxt.isNotEmpty) patch['price'] = price;
+            if (costTxt.isNotEmpty)  patch['cost']  = cost;
+            if (category.isNotEmpty) patch['category'] = category;
+
+            if (stockAbs.isNotEmpty) {
+              patch['stock'] = _i(stockAbs);
+            } else if (qtyDelta.isNotEmpty) {
+              final current = (found.first['stock'] as num?)?.toInt() ?? 0;
+              patch['stock'] = current + _i(qtyDelta);
+            }
+
+            if (patch.length > 1) {
+              await txn.update('products', patch, where: 'id = ?', whereArgs: [id]);
+              updated++;
+            } else {
+              skipped++;
+            }
+          } else {
+            final hasAny = name.isNotEmpty || priceTxt.isNotEmpty || costTxt.isNotEmpty;
+            if (!hasAny) { skipped++; continue; }
+
+            final initialStock = stockAbs.isNotEmpty
+                ? _i(stockAbs)
+                : qtyDelta.isNotEmpty ? _i(qtyDelta) : 0;
+
+            await txn.insert('products', {
+              'id'        : genId(),
+              'sku'       : sku,
+              'name'      : name.isNotEmpty ? name : null,
+              'price'     : price,
+              'cost'      : cost,
+              'stock'     : initialStock,
+              'category'  : category.isNotEmpty ? category : null,
+              'created_at': nowIso(),
+              'updated_at': nowIso(),
+            }, conflictAlgorithm: ConflictAlgorithm.abort);
+            inserted++;
+          }
+        } catch (_) {
+          errors++;
+        }
+      }
+    });
+
+    return {'inserted': inserted, 'updated': updated, 'skipped': skipped, 'errors': errors};
+  }
+
+  // ----------------- IMPORT AJUSTES DE INVENTARIO (delta) -----------------
+  /// Espera columnas: sku y qty (también tolera: cantidad/ajuste/delta/stock como delta).
+  static Future<Map<String, int>> importInventoryAddsFromCsv() async {
+    final bytes = await _pickCsvBytes();
+    if (bytes == null) return {'changed': 0, 'missing': 0, 'errors': 0};
+
+    final table = _parseCsv(bytes);
+    if (table.isEmpty) return {'changed': 0, 'missing': 0, 'errors': 0};
+
+    final h = _headerMap(table.first);
+    final db = await AppDatabase.instance.database;
+
+    int changed = 0, missing = 0, errors = 0;
+
+    String qtyKey = 'qty';
+    for (final k in ['qty', 'cantidad', 'ajuste', 'delta', 'stock']) {
+      if (h.containsKey(k)) { qtyKey = k; break; }
+    }
+
+    await db.transaction((txn) async {
+      for (var r = 1; r < table.length; r++) {
+        try {
+          final row = table[r];
+          final sku = _s(_cell(row, h, 'sku'));
+          final delta = _i(_cell(row, h, qtyKey));
+          if (sku.isEmpty || delta == 0) { missing++; continue; }
+
+          final found = await txn.query('products', where: 'sku = ?', whereArgs: [sku], limit: 1);
+          if (found.isEmpty) { missing++; continue; }
+
+          final current = (found.first['stock'] as num?)?.toInt() ?? 0;
+          final newStock = current + delta;
+          await txn.update('products', {'stock': newStock, 'updated_at': nowIso()}, where: 'sku = ?', whereArgs: [sku]);
+          changed++;
+        } catch (_) {
+          errors++;
+        }
+      }
+    });
+
+    return {'changed': changed, 'missing': missing, 'errors': errors};
   }
 }

@@ -145,26 +145,26 @@ class _SalesPageState extends State<SalesPage> {
             Row(
               children: [
                 Expanded(
-                  child: FutureBuilder<List<Map<String, Object?>>>>(
-                    future: CustomerRepository().all(),
+                  child: FutureBuilder<List<Map<String, Object?>>>(
+                    future: CustomerRepository().listFiltered(),
                     builder: (context, snap) {
                       final customers = snap.data ?? const [];
-                      final label = _customer == null
-                          ? 'Cliente (opcional)'
-                          : (_customer!['name']?.toString().isNotEmpty ?? false)
-                              ? _customer!['name']!.toString()
-                              : (_customer!['phone']?.toString() ?? _customer!['id']?.toString() ?? 'Cliente');
-                      return DropdownButtonFormField<String>(
+                      return DropdownButtonFormField<String?>(
                         isExpanded: true,
                         decoration: const InputDecoration(labelText: 'Cliente'),
                         value: _customer?['id']?.toString(),
-                        items: [
-                          const DropdownMenuItem(value: null, child: Text('— Sin cliente —')),
-                          ...customers.map((c) {
-                            final txt = (c['name']?.toString().isNotEmpty ?? false) ? c['name'].toString() : (c['phone']?.toString() ?? c['id']?.toString() ?? '');
-                            return DropdownMenuItem(value: c['id'].toString(), child: Text(txt));
-                          }),
-                        ].whereType<DropdownMenuItem<String>>().toList(),
+                        items: <DropdownMenuItem<String?>>[
+                          const DropdownMenuItem<String?>(value: null, child: Text('— Sin cliente —')),
+                          ...customers.map<DropdownMenuItem<String?>>((c) {
+                            final txt = (c['name']?.toString().isNotEmpty ?? false)
+                                ? c['name'].toString()
+                                : (c['phone']?.toString() ?? c['id']?.toString() ?? '');
+                            return DropdownMenuItem<String?>(
+                              value: c['id']?.toString(),
+                              child: Text(txt),
+                            );
+                          }).toList(),
+                        ],
                         onChanged: (v) async {
                           if (v == null) { setState(() => _customer = null); return; }
                           final c = await _customerRepo.byId(v);
@@ -240,7 +240,7 @@ class _SalesPageState extends State<SalesPage> {
                         ],
                       ),
                       onTap: () async {
-                        // Editar descuento de línea rápido
+                        // Editar descuento de línea
                         final ctl = TextEditingController(text: ld.toStringAsFixed(2));
                         final ok = await showDialog<bool>(
                           context: context,

@@ -15,21 +15,61 @@ class _SalesPageState extends State<SalesPage> {
   final _customerRepo = CustomerRepository();
   final _saleRepo = SaleRepository();
 
+  // Productos
   final _searchProductCtl = TextEditingController();
+
+  // Clientes (nuevo: búsqueda)
+  final _searchCustomerCtl = TextEditingController();
+  Map<String, Object?>? _customer; // {'id','name','phone'}
+
+  // Totales
   final _discountCtl = TextEditingController(text: '0');
   final _shippingCtl = TextEditingController(text: '0');
-
-  Map<String, Object?>? _customer; // {'id':..., 'name':..., 'phone':...}
-  final List<Map<String, Object?>> _items = []; // cart
-
   String _payment = 'Efectivo';
+
+  // Carrito
+  final List<Map<String, Object?>> _items = [];
 
   @override
   void dispose() {
     _searchProductCtl.dispose();
+    _searchCustomerCtl.dispose();
     _discountCtl.dispose();
     _shippingCtl.dispose();
     super.dispose();
+  }
+
+  // ---------- CLIENTES: búsqueda como productos ----------
+  Future<void> _searchAndPickCustomer(String q) async {
+    final list = await _customerRepo.listFiltered(q: q.trim().isEmpty ? null : q.trim());
+    if (list.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se encontró cliente')));
+      return;
+    }
+    Map<String, Object?>? selected;
+    if (list.length == 1) {
+      selected = list.first;
+    } else {
+      selected = await showDialog<Map<String, Object?>>(
+        context: context,
+        builder: (_) => SimpleDialog(
+          title: const Text('Selecciona un cliente'),
+          children: list.map((c) {
+            final name = (toStr(c['name']).isNotEmpty)
+                ? toStr(c['name'])
+                : (toStr(c['phone']).isNotEmpty ? toStr(c['phone']) : toStr(c['id']));
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, c),
+              child: Text(name),
+            );
+          }).toList(),
+        ),
+      );
+    }
+    if (selected != null) {
+      setState(() => _customer = selected);
+    }
   }
 
   Future<void> _addCustomer() async {
@@ -39,7 +79,7 @@ class _SalesPageState extends State<SalesPage> {
     );
     if (data != null) {
       await _customerRepo.upsertCustomer({
-        'id'   : data['phone'], // usar teléfono como identificador
+        'id'   : data['phone'], // usamos teléfono como ID
         'name' : data['name'],
         'phone': data['phone'],
       });
@@ -50,9 +90,11 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
+  // ---------- PRODUCTOS ----------
   Future<void> _searchAndAddProduct(String q) async {
     final list = await _productRepo.listFiltered(q: q);
     if (list.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se encontró producto')));
       return;
     }
@@ -65,7 +107,7 @@ class _SalesPageState extends State<SalesPage> {
         builder: (_) => SimpleDialog(
           title: const Text('Selecciona un producto'),
           children: list.map((p) {
-            final name = (p['name']?.toString().isNotEmpty ?? false) ? p['name'].toString() : p['sku']?.toString() ?? '—';
+            final name = (toStr(p['name']).isNotEmpty) ? toStr(p['name']) : toStr(p['sku']);
             return SimpleDialogOption(
               onPressed: () => Navigator.pop(context, p),
               child: Text('$name  •  SKU: ${p['sku']}'),
@@ -76,36 +118,34 @@ class _SalesPageState extends State<SalesPage> {
     }
     if (selected == null) return;
 
-    // Agregar al carrito (si existe, suma qty)
-    final pid = selected['id']!.toString();
-    final idx = _items.indexWhere((e) => e['productId'] == pid);
+    // Agregar / incrementar
+    final pid = toStr(selected['id']);
+    final idx = _items.indexWhere((e) => toStr(e['productId']) == pid);
     if (idx >= 0) {
-      setState(() => _items[idx]['quantity'] = (toInt(_items[idx]['quantity']) + 1));
+      setState(() => _items[idx]['quantity'] = toInt(_items[idx]['quantity']) + 1);
     } else {
       setState(() {
         _items.add({
-          'id'         : genId(),
-          'productId'  : pid,
-          'sku'        : selected!['sku'],
-          'name'       : selected['name'],
-          'price'      : toDouble(selected['price']),
-          'cost'       : toDouble(selected['cost']),
-          'quantity'   : 1,
-          'lineDiscount': 0.0,
+          'id'           : genId(),
+          'productId'    : pid,
+          'sku'          : selected!['sku'],
+          'name'         : selected['name'],
+          'price'        : toDouble(selected['price']),
+          'cost'         : toDouble(selected['cost']),
+          'quantity'     : 1,
+          'lineDiscount' : 0.0,
         });
       });
     }
   }
 
-  double get _subtotal {
-    return _items.fold<double>(0, (acc, it) {
-      final price = toDouble(it['price']);
-      final qty   = toInt(it['quantity'], fallback: 1);
-      final ld    = toDouble(it['lineDiscount']);
-      return acc + (price * qty - ld);
-    });
-  }
-
+  // ---------- TOTALES ----------
+  double get _subtotal => _items.fold<double>(0, (acc, it) {
+        final price = toDouble(it['price']);
+        final qty   = toInt(it['quantity'], fallback: 1);
+        final ld    = toDouble(it['lineDiscount']);
+        return acc + (price * qty - ld);
+      });
   double get _discount => toDouble(_discountCtl.text);
   double get _shipping => toDouble(_shippingCtl.text);
   double get _total => _subtotal - _discount + _shipping;
@@ -141,50 +181,50 @@ class _SalesPageState extends State<SalesPage> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            // Cliente + agregar
+            // ------- Cliente: búsqueda “live” y agregar -------
             Row(
               children: [
                 Expanded(
-                  child: FutureBuilder<List<Map<String, Object?>>>(
-                    future: CustomerRepository().listFiltered(),
-                    builder: (context, snap) {
-                      final customers = snap.data ?? const [];
-                      return DropdownButtonFormField<String?>(
-                        isExpanded: true,
-                        decoration: const InputDecoration(labelText: 'Cliente'),
-                        value: _customer?['id']?.toString(),
-                        items: <DropdownMenuItem<String?>>[
-                          const DropdownMenuItem<String?>(value: null, child: Text('— Sin cliente —')),
-                          ...customers.map<DropdownMenuItem<String?>>((c) {
-                            final txt = (c['name']?.toString().isNotEmpty ?? false)
-                                ? c['name'].toString()
-                                : (c['phone']?.toString() ?? c['id']?.toString() ?? '');
-                            return DropdownMenuItem<String?>(
-                              value: c['id']?.toString(),
-                              child: Text(txt),
-                            );
-                          }).toList(),
-                        ],
-                        onChanged: (v) async {
-                          if (v == null) { setState(() => _customer = null); return; }
-                          final c = await _customerRepo.byId(v);
-                          setState(() => _customer = c);
-                        },
-                      );
-                    },
+                  child: TextField(
+                    controller: _searchCustomerCtl,
+                    decoration: InputDecoration(
+                      labelText: 'Buscar cliente (nombre / ID / teléfono) y Enter',
+                      prefixIcon: const Icon(Icons.person_search),
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.search),
+                        onPressed: () => _searchAndPickCustomer(_searchCustomerCtl.text),
+                      ),
+                    ),
+                    onSubmitted: (v) => _searchAndPickCustomer(v),
                   ),
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.person_add_alt),
-                  label: const Text('Agregar cliente'),
+                  label: const Text('Agregar'),
                   onPressed: _addCustomer,
                 ),
               ],
             ),
+            if (_customer != null) ...[
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: InputChip(
+                  label: Text(
+                    toStr(_customer!['name']).isNotEmpty
+                        ? toStr(_customer!['name'])
+                        : (toStr(_customer!['phone']).isNotEmpty ? toStr(_customer!['phone']) : toStr(_customer!['id'])),
+                  ),
+                  onDeleted: () => setState(() => _customer = null),
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
 
-            // Buscar producto
+            // ------- Buscar producto -------
             TextField(
               controller: _searchProductCtl,
               decoration: InputDecoration(
@@ -201,7 +241,7 @@ class _SalesPageState extends State<SalesPage> {
             ),
             const SizedBox(height: 8),
 
-            // Lista del carrito
+            // ------- Carrito -------
             Expanded(
               child: Card(
                 child: ListView.separated(
@@ -209,7 +249,7 @@ class _SalesPageState extends State<SalesPage> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, i) {
                     final it = _items[i];
-                    final name = (it['name']?.toString().isNotEmpty ?? false) ? it['name'].toString() : it['sku']?.toString() ?? '—';
+                    final name = toStr(it['name']).isNotEmpty ? toStr(it['name']) : toStr(it['sku']);
                     final price = toDouble(it['price']);
                     final qty   = toInt(it['quantity'], fallback: 1);
                     final ld    = toDouble(it['lineDiscount']);
@@ -224,13 +264,13 @@ class _SalesPageState extends State<SalesPage> {
                           IconButton(
                             tooltip: '–1',
                             icon: const Icon(Icons.remove_circle_outline),
-                            onPressed: () => setState(() { if (toInt(it['quantity'], fallback: 1) > 1) it['quantity'] = toInt(it['quantity']) - 1; }),
+                            onPressed: () => setState(() { if (qty > 1) it['quantity'] = qty - 1; }),
                           ),
                           Text(qty.toString()),
                           IconButton(
                             tooltip: '+1',
                             icon: const Icon(Icons.add_circle_outline),
-                            onPressed: () => setState(() { it['quantity'] = toInt(it['quantity']) + 1; }),
+                            onPressed: () => setState(() { it['quantity'] = qty + 1; }),
                           ),
                           IconButton(
                             tooltip: 'Eliminar',
@@ -240,7 +280,6 @@ class _SalesPageState extends State<SalesPage> {
                         ],
                       ),
                       onTap: () async {
-                        // Editar descuento de línea
                         final ctl = TextEditingController(text: ld.toStringAsFixed(2));
                         final ok = await showDialog<bool>(
                           context: context,
@@ -267,7 +306,7 @@ class _SalesPageState extends State<SalesPage> {
               ),
             ),
 
-            // Totales
+            // ------- Totales & guardar -------
             const SizedBox(height: 8),
             Row(
               children: [

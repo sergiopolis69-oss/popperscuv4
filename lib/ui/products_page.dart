@@ -98,10 +98,17 @@ class _ProductsPageState extends State<ProductsPage> {
                 FutureBuilder<List<String>>(
                   future: _repo.categoriesDistinct(),
                   builder: (context, snap) {
-                    final items = ['Todas', ...(snap.data ?? const [])];
+                    final cats = ['Todas', ...(snap.data ?? const [])];
                     return DropdownButton<String>(
-                      value: items.contains(_category) ? _category : 'Todas',
-                      items: items.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      value: cats.contains(_category) ? _category : 'Todas',
+                      items: cats
+                          .map<DropdownMenuItem<String>>(
+                            (c) => DropdownMenuItem<String>(
+                              value: c,
+                              child: Text(c),
+                            ),
+                          )
+                          .toList(),
                       onChanged: (v) => setState(() => _category = v ?? 'Todas'),
                     );
                   },
@@ -125,7 +132,9 @@ class _ProductsPageState extends State<ProductsPage> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, i) {
                     final p = data[i];
-                    final name = (p['name']?.toString().isNotEmpty ?? false) ? p['name'].toString() : p['sku']?.toString() ?? '—';
+                    final name = (p['name']?.toString().isNotEmpty ?? false)
+                        ? p['name'].toString()
+                        : p['sku']?.toString() ?? '—';
                     final stock = (p['stock'] as num?)?.toInt() ?? 0;
                     final price = (p['price'] as num?)?.toDouble() ?? 0;
                     return ListTile(
@@ -139,7 +148,7 @@ class _ProductsPageState extends State<ProductsPage> {
                             context: context,
                             builder: (_) => AlertDialog(
                               title: const Text('Eliminar producto'),
-                              content: Text('¿Eliminar "${name}"?'),
+                              content: Text('¿Eliminar "$name"?'),
                               actions: [
                                 TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
                                 FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar')),

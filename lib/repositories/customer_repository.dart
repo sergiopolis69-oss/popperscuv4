@@ -24,7 +24,7 @@ class CustomerRepository {
     );
   }
 
-  Future<List<Map<String, Object?>>> all({String? q}) async {
+  Future<List<Map<String, Object?>>> listFiltered({String? q}) async {
     final db = await _db;
     if (q != null && q.trim().isNotEmpty) {
       final s = '%${q.toLowerCase()}%';
@@ -37,6 +37,8 @@ class CustomerRepository {
     }
     return db.query('customers', orderBy: 'name');
   }
+
+  Future<List<Map<String, Object?>>> all({String? q}) => listFiltered(q: q);
 
   Future<Map<String, Object?>?> byId(String id) async {
     final db = await _db;

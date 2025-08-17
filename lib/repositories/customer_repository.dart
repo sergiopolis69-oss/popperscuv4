@@ -1,68 +1,46 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:popperscuv/utils/db.dart';
-import 'package:popperscuv/utils/helpers.dart';
+import '../utils/db.dart';
+import '../utils/misc.dart';
 
 class CustomerRepository {
   Future<Database> get _db async => AppDatabase.instance.database;
 
-  Future<List<Map<String, Object?>>> all() async {
+  Future<void> upsertCustomer(Map<String, Object?> data) async {
     final db = await _db;
-    return db.query('customers', orderBy: 'LOWER(name)');
-  }
-
-  Future<List<Map<String, Object?>>> listFiltered({String? q}) async {
-    final db = await _db;
-    if (q == null || q.trim().isEmpty) {
-      return db.query('customers', orderBy: 'LOWER(name)');
-    }
-    return db.query(
+    final id = toStr(data['id']).isNotEmpty
+        ? toStr(data['id'])
+        : (toStr(data['phone']).isNotEmpty ? toStr(data['phone']) : genId());
+    final now = nowIso();
+    await db.insert(
       'customers',
-      where: 'LOWER(COALESCE(name,"")) LIKE LOWER(?) OR LOWER(COALESCE(id,"")) LIKE LOWER(?) OR LOWER(COALESCE(phone,"")) LIKE LOWER(?)',
-      whereArgs: ['%${q.trim()}%', '%${q.trim()}%', '%${q.trim()}%'],
-      orderBy: 'LOWER(name)',
+      {
+        'id'        : id,
+        'name'      : toStr(data['name']).isNotEmpty ? toStr(data['name']) : null,
+        'phone'     : toStr(data['phone']).isNotEmpty ? toStr(data['phone']) : null,
+        'created_at': toStr(data['created_at']).isNotEmpty ? toStr(data['created_at']) : now,
+        'updated_at': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  Future<void> deleteById(String id) async {
+  Future<List<Map<String, Object?>>> all({String? q}) async {
     final db = await _db;
-    await db.delete('customers', where: 'id=?', whereArgs: [id]);
+    if (q != null && q.trim().isNotEmpty) {
+      final s = '%${q.toLowerCase()}%';
+      return db.query(
+        'customers',
+        where: 'LOWER(name) LIKE ? OR LOWER(phone) LIKE ? OR LOWER(id) LIKE ?',
+        whereArgs: [s, s, s],
+        orderBy: 'name',
+      );
+    }
+    return db.query('customers', orderBy: 'name');
   }
 
-  Future<void> upsertCustomer(Map<String, Object?> data) async {
+  Future<Map<String, Object?>?> byId(String id) async {
     final db = await _db;
-    // Usamos id explícito, si no, phone como id, si no, genId()
-    final providedId = data['id']?.toString().trim();
-    final phone = data['phone']?.toString().trim();
-    final id = (providedId?.isNotEmpty ?? false)
-        ? providedId!
-        : ((phone?.isNotEmpty ?? false) ? phone! : genId());
-
-    final now = nowIso();
-    final row = <String, Object?>{
-      'id': id,
-      'name': data['name']?.toString(),
-      'phone': phone,
-      'email': data['email']?.toString(),
-      'updated_at': now,
-    };
-
-    final exists = await db.query('customers', columns: ['id'], where: 'id=?', whereArgs: [id], limit: 1);
-    if (exists.isEmpty) row['created_at'] = now;
-
-    await db.insert('customers', row, conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  Future<void> upsertCustomerNamed({
-    String? id,
-    required String name,
-    String? phone,
-    String? email,
-  }) async {
-    await upsertCustomer({
-      'id': id,
-      'name': name,
-      'phone': phone,
-      'email': email,
-    });
+    final rows = await db.query('customers', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : rows.first;
   }
 }

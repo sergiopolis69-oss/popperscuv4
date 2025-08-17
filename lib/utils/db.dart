@@ -1,105 +1,82 @@
 import 'dart:async';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
   AppDatabase._();
   static final AppDatabase instance = AppDatabase._();
-
   Database? _db;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
-    _db = await _open();
-    return _db!;
-  }
-
-  Future<Database> _open() async {
-    final dbDir = await getDatabasesPath();
-    final path = p.join(dbDir, 'popperscuv.db');
-
-    return openDatabase(
-      path,
-      version: 2,
-      onCreate: (db, _) async {
+    final docsDir = await getApplicationDocumentsDirectory();
+    final dbPath = p.join(docsDir.path, 'popperscuv.db');
+    _db = await openDatabase(
+      dbPath,
+      version: 1,
+      onCreate: (db, v) async {
+        // Productos
         await db.execute('''
-          CREATE TABLE IF NOT EXISTS products(
+          CREATE TABLE products(
             id TEXT PRIMARY KEY,
+            sku TEXT UNIQUE,
             name TEXT,
-            sku TEXT,
+            price REAL DEFAULT 0,
+            cost REAL DEFAULT 0,
+            stock INTEGER DEFAULT 0,
             category TEXT,
-            price REAL NOT NULL DEFAULT 0,
-            cost REAL NOT NULL DEFAULT 0,
-            stock INTEGER NOT NULL DEFAULT 0,
             created_at TEXT,
             updated_at TEXT
-          )
+          );
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_products_name ON products(LOWER(name))');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_products_sku ON products(LOWER(sku))');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_products_cat ON products(LOWER(category))');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);');
 
+        // Clientes
         await db.execute('''
-          CREATE TABLE IF NOT EXISTS customers(
+          CREATE TABLE customers(
             id TEXT PRIMARY KEY,
             name TEXT,
-            phone TEXT,
-            email TEXT,
+            phone TEXT UNIQUE,
             created_at TEXT,
             updated_at TEXT
-          )
+          );
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(LOWER(name))');
 
+        // Ventas
         await db.execute('''
-          CREATE TABLE IF NOT EXISTS sales(
+          CREATE TABLE sales(
             id TEXT PRIMARY KEY,
             customer_id TEXT,
-            total REAL NOT NULL DEFAULT 0,
-            discount REAL NOT NULL DEFAULT 0,
-            shipping_cost REAL NOT NULL DEFAULT 0,
-            profit REAL NOT NULL DEFAULT 0,
+            total REAL DEFAULT 0,
+            discount REAL DEFAULT 0,
+            shipping_cost REAL DEFAULT 0,
+            profit REAL DEFAULT 0,
             payment_method TEXT,
             created_at TEXT
-          )
+          );
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at);');
 
+        // Items de venta
         await db.execute('''
-          CREATE TABLE IF NOT EXISTS sale_items(
+          CREATE TABLE sale_items(
             id TEXT PRIMARY KEY,
             sale_id TEXT,
             product_id TEXT,
-            name TEXT,
             sku TEXT,
-            price REAL NOT NULL DEFAULT 0,
-            cost REAL NOT NULL DEFAULT 0,
-            quantity INTEGER NOT NULL DEFAULT 1,
-            line_discount REAL NOT NULL DEFAULT 0,
-            subtotal REAL NOT NULL DEFAULT 0,
-            created_at TEXT
-          )
+            name TEXT,
+            price REAL DEFAULT 0,
+            cost REAL DEFAULT 0,
+            quantity INTEGER DEFAULT 1,
+            line_discount REAL DEFAULT 0,
+            subtotal REAL DEFAULT 0
+          );
         ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_items_sale ON sale_items(sale_id)');
-
-        await db.execute('''
-          CREATE TABLE IF NOT EXISTS inventory_movements(
-            id TEXT PRIMARY KEY,
-            product_id TEXT,
-            delta INTEGER NOT NULL,
-            reason TEXT,
-            created_at TEXT
-          )
-        ''');
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_inv_mov_prod ON inventory_movements(product_id)');
-      },
-      onUpgrade: (db, oldV, _) async {
-        if (oldV < 2) {
-          await db.execute('ALTER TABLE sales ADD COLUMN profit REAL NOT NULL DEFAULT 0');
-          await db.execute('ALTER TABLE sales ADD COLUMN shipping_cost REAL NOT NULL DEFAULT 0');
-        }
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);');
       },
     );
+    return _db!;
   }
 }

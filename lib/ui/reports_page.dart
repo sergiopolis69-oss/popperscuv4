@@ -1,77 +1,82 @@
-
 import 'package:flutter/material.dart';
 import '../utils/csv_io.dart';
 
-class ReportsPage extends StatefulWidget {
+class ReportsPage extends StatelessWidget {
   const ReportsPage({super.key});
-  @override
-  State<ReportsPage> createState() => _ReportsPageState();
-}
-
-class _ReportsPageState extends State<ReportsPage> {
-  String status = '';
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Reportes / CSV')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ElevatedButton(
-                  onPressed: () async {
-                    final p = await CsvIO.exportTable('products');
-                    setState(() => status = 'Exportado: $p');
-                  },
-                  child: const Text('Exportar products.csv'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final p = await CsvIO.exportTable('customers');
-                    setState(() => status = 'Exportado: $p');
-                  },
-                  child: const Text('Exportar customers.csv'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final p = await CsvIO.exportTable('sales');
-                    setState(() => status = 'Exportado: $p');
-                  },
-                  child: const Text('Exportar sales.csv'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final n = await CsvIO.importInventoryAddsFromCsv();
-                    setState(() => status = 'Inventario actualizado (sumas): $n filas');
-                  },
-                  child: const Text('Importar inventario (sumar)'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final n = await CsvIO.importProductsUpsertFromCsv();
-                    setState(() => status = 'Productos actualizados (upsert): $n filas');
-                  },
-                  child: const Text('Upsert productos (CSV)'),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final n = await CsvIO.importProductsFromCsv();
-                    setState(() => status = 'Productos nuevos insertados: $n');
-                  },
-                  child: const Text('Insertar productos nuevos (CSV)'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(status),
-          ],
-        ),
+      appBar: AppBar(title: const Text('Importar / Exportar CSV')),
+      body: ListView(
+        children: [
+          const ListTile(title: Text('Exportar')),
+          ListTile(
+            leading: const Icon(Icons.download),
+            title: const Text('Exportar productos.csv'),
+            onTap: () async {
+              final p = await CsvIO.exportTable('products');
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exportado: $p')));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.download),
+            title: const Text('Exportar customers.csv'),
+            onTap: () async {
+              final p = await CsvIO.exportTable('customers');
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exportado: $p')));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.download),
+            title: const Text('Exportar sales.csv'),
+            onTap: () async {
+              final p = await CsvIO.exportTable('sales');
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exportado: $p')));
+            },
+          ),
+          const Divider(),
+          const ListTile(title: Text('Importar')),
+          ListTile(
+            leading: const Icon(Icons.upload_file),
+            title: const Text('Importar productos (upsert por SKU)'),
+            subtitle: const Text('Columnas: sku, name?, price?, cost?, stock? o qty?, category?'),
+            onTap: () async {
+              final m = await CsvIO.importProductsUpsertFromCsv();
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Prod → ins:${m['inserted']} act:${m['updated']} om:${m['skipped']} err:${m['errors']}')),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.playlist_add),
+            title: const Text('Ajustes inventario (sumar qty por SKU)'),
+            subtitle: const Text('Columnas: sku, qty'),
+            onTap: () async {
+              final m = await CsvIO.importInventoryAddsFromCsv();
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Inv → cambios:${m['changed']} falt:${m['missing']} err:${m['errors']}')),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.group_add),
+            title: const Text('Importar clientes (upsert por ID o phone)'),
+            subtitle: const Text('Columnas: id?, name?, phone? — si id vacío usa phone como ID'),
+            onTap: () async {
+              final m = await CsvIO.importCustomersFromCsv();
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Clientes → ins:${m['inserted']} act:${m['updated']} om:${m['skipped']} err:${m['errors']}')),
+              );
+            },
+          ),
+        ],
       ),
     );
   }

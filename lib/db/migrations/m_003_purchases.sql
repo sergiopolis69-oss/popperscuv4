@@ -1,3 +1,7 @@
+// lib/db/migrations/m_003_purchases_sql.dart
+// SQL embebido para evitar rootBundle/assets
+
+const String kPurchasesMigration = r'''
 -- Suppliers
 CREATE TABLE IF NOT EXISTS suppliers(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,3 +33,4 @@ CREATE TABLE IF NOT EXISTS purchase_items(
 
 CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date);
 CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id);
+''';

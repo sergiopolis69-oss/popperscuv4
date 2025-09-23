@@ -1,6 +1,7 @@
+// lib/data/database_provider.dart (HOTFIX)
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
-import 'package:flutter/services.dart' show rootBundle;
+import '../db/migrations/m_003_purchases_sql.dart';
 
 class DatabaseProvider {
   static final DatabaseProvider _instance = DatabaseProvider._();
@@ -15,9 +16,8 @@ class DatabaseProvider {
     final path = p.join(await getDatabasesPath(), 'app.db');
     _db = await openDatabase(
       path,
-      version: 4, // bump
+      version: 5, // ⬅️ sube la versión para forzar migración
       onCreate: (db, version) async {
-        // TODO: tu esquema base existente...
         await _enableFk(db);
         await _applyPurchasesMigration(db);
       },
@@ -33,9 +33,8 @@ class DatabaseProvider {
   Future<void> _enableFk(Database db) => db.execute('PRAGMA foreign_keys = ON');
 
   Future<void> _applyPurchasesMigration(Database db) async {
-    final sql = await rootBundle.loadString('lib/db/migrations/m_003_purchases.sql');
-    for (final stmt in sql.split(';')) {
-      final s = stmt.trim();
+    for (final raw in kPurchasesMigration.split(';')) {
+      final s = raw.trim();
       if (s.isNotEmpty) {
         await db.execute('$s;');
       }

@@ -30,6 +30,7 @@ dependencies:
   # Exportar / permisos Android
   permission_handler: ^11.3.1
   open_filex: ^4.5.0
+  media_store_plus: ^2.3.0
 
 dev_dependencies:
   flutter_test:

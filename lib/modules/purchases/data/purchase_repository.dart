@@ -1,4 +1,3 @@
-
 import 'package:sqflite/sqflite.dart';
 import 'purchase_models.dart';
 

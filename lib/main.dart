@@ -1,3 +1,4 @@
+// lib/main.dart (HOTFIX con manejo de errores en init)
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -9,9 +10,33 @@ import 'modules/purchases/ui/purchase_form_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final dbProvider = DatabaseProvider();
-  await dbProvider.init();
-  runApp(MyApp(db: dbProvider.db));
+  try {
+    final dbProvider = DatabaseProvider();
+    await dbProvider.init();
+    runApp(MyApp(db: dbProvider.db));
+  } catch (e, st) {
+    runApp(InitErrorApp(message: e.toString()));
+    // ignore: avoid_print
+    print('Init error: $e\\n$st');
+  }
+}
+
+class InitErrorApp extends StatelessWidget {
+  final String message;
+  const InitErrorApp({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('Error al iniciar')),
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Text(message),
+        ),
+      ),
+    );
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -26,7 +51,10 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Poppers CUV',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
-      home: HomePage(purchaseRepo: purchaseRepo, purchaseService: purchaseService),
+      home: HomePage(
+        purchaseRepo: purchaseRepo,
+        purchaseService: purchaseService,
+      ),
       routes: {
         '/purchases': (_) => PurchaseListPage(repo: purchaseRepo),
         '/purchases/new': (_) => PurchaseFormPage(service: purchaseService),
@@ -38,24 +66,16 @@ class MyApp extends StatelessWidget {
 class HomePage extends StatelessWidget {
   final PurchaseRepository purchaseRepo;
   final PurchaseService purchaseService;
-  const HomePage({super.key, required this.purchaseRepo, required this.purchaseService});
+  const HomePage({
+    super.key,
+    required this.purchaseRepo,
+    required this.purchaseService,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Inicio')),
-      drawer: Drawer(
-        child: ListView(
-          children: [
-            const DrawerHeader(child: Text('Menú')),
-            ListTile(
-              leading: const Icon(Icons.inventory_2),
-              title: const Text('Compras'),
-              onTap: () => Navigator.pushNamed(context, '/purchases'),
-            ),
-          ],
-        ),
-      ),
       body: Center(
         child: ElevatedButton.icon(
           onPressed: () => Navigator.pushNamed(context, '/purchases'),

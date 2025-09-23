@@ -6,7 +6,7 @@ class DatabaseProvider {
   DatabaseProvider._();
   factory DatabaseProvider() => _i;
 
-  static const int dbVersion = 6; // súbelo si ya tienes otra versión
+  static const int dbVersion = 7; // súbelo si ya tienes otra versión
   static const String dbName = 'popperscuv4.db';
 
   Database? _db;
